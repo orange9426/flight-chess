@@ -1321,7 +1321,7 @@ class NetworkController {
   emit(e,d){(this.listeners[e]||[]).forEach(cb=>cb(d));}
   connect(){return new Promise((res,rej)=>{const proto=location.protocol==='https:'?'wss:':'ws:';const url=`${proto}//${location.host}/ws`;let done=false;this.ws=new WebSocket(url);const t=setTimeout(()=>{if(!done){done=true;rej(new Error('连接超时'));try{this.ws.close();}catch(e){}}},8000);this.ws.onopen=()=>{if(done)return;done=true;clearTimeout(t);res();};this.ws.onerror=()=>{if(done)return;done=true;clearTimeout(t);rej(new Error('连接失败'));};this.ws.onclose=()=>{if(!done){done=true;clearTimeout(t);rej(new Error('服务器未启动'));return;}this.emit('disconnected');};this.ws.onmessage=evt=>{try{const m=JSON.parse(evt.data);this._handle(m);}catch(e){}};});}
   send(type,data){if(this.ws?.readyState===1)this.ws.send(JSON.stringify({type,data}));}
-  _handle(m){const{type,data}=m;switch(type){case'roomCreated':this.roomId=data.roomId;this.playerIndex=data.playerIndex;this.isHost=data.isHost;this.emit('roomCreated',data);break;case'roomJoined':this.roomId=data.roomId;this.playerIndex=data.playerIndex;this.isHost=data.isHost;this.emit('roomJoined',data);break;case'playerJoined':this.emit('playerJoined',data);break;case'gameStart':this.emit('gameStart');break;case'opponentDisconnected':this.emit('opponentDisconnected');break;case'roomLeft':this.emit('roomLeft');break;case'error':this.emit('error',m.message);break;case'gameEvent':if(data.event==='stateChange')this.state=data;this.emit(data.event,data);break;}}
+  _handle(m){const{type,data}=m;switch(type){case'roomCreated':this.roomId=data.roomId;this.playerIndex=data.playerIndex;this.isHost=data.isHost;this.emit('roomCreated',data);break;case'roomJoined':this.roomId=data.roomId;this.playerIndex=data.playerIndex;this.isHost=data.isHost;this.emit('roomJoined',data);break;case'playerJoined':this.emit('playerJoined',data);break;case'gameStart':this.emit('gameStart');break;case'opponentDisconnected':this.emit('opponentDisconnected');break;case'roomLeft':this.emit('roomLeft');break;case'error':this.emit('error',m.message);break;case'gameEvent':{const ed=data.data;if(data.event==='stateChange')this.state=ed;this.emit(data.event,ed);break;}}}
   createRoom(){this.send('createRoom');}
   joinRoom(id){this.send('joinRoom',{roomId:id});}
   leaveRoom(){this.send('leaveRoom');}
@@ -1398,6 +1398,7 @@ class UIController {
     g.on('stateChange',s=>this.updateUI(s));
     g.on('diceRoll',({value})=>this._animateDice(value));
     g.on('selectPiece',v=>this._enableSelect(v));
+    g.on('autoSelectPiece',({pieceIndex})=>{this._info('自动骰子！自动选择棋子');this._autoPiece=pieceIndex;});
     g.on('pieceMove',d=>this._animateMove(d.player,d.pieceIndex,d.fromPos,d.toPos));
     g.on('pieceFinished',({player,pieceIndex})=>{
       this.pieceEls[player][pieceIndex].classList.add('piece-finished');
@@ -1576,6 +1577,7 @@ class UIController {
 
   _showReroll(d){
     this.$('diceHint').textContent=`点数 ${d.diceValue}`;
+    if(this.mode==="online"&&d.player!==this.myIdx){this.$("rerollBar").classList.add("hidden");return;}
     const bar=this.$('rerollBar');
     bar.classList.remove('hidden');
     const btn=this.$('rerollDiceBtn');
@@ -1586,6 +1588,7 @@ class UIController {
 
   _enableSelect(steps){
     const s=this.game.state,cur=s.currentPlayer,p=s.players[cur];
+    if(this.mode==="online"&&cur!==this.myIdx){this._info(`玩家${cur+1}选择棋子中...`);return;}
     if(this._autoPiece!==null&&this._autoPiece!==undefined){
       const idx=this._autoPiece;this._autoPiece=null;
       if(!p.finished[idx]){this._info(`叠棋奖励！自动前进`);setTimeout(()=>this._selectPiece(idx),200);return;}

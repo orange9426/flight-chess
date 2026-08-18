@@ -450,6 +450,34 @@ class GameEngine {
     });
   }
 
+  onDiceAnimEnd() {
+    if (this.state.phase !== 'rolling') return;
+    this.state.phase = 'selecting';
+    const p = this.state.players[this.state.currentPlayer];
+    const cost = (this.state.rerollCount + 1) * 2;
+
+    if (this.state.autoMovePending) {
+      this.state.autoMovePending = false;
+      const choices = [0, 1].filter(i => !p.finished[i]);
+      if (choices.length > 0) {
+        const idx = choices[Math.floor(Math.random() * choices.length)];
+        this.emit('autoSelectPiece', { pieceIndex: idx });
+        setTimeout(() => this.movePiece(idx), 600);
+        this.emit('stateChange', this.state);
+        return;
+      }
+    }
+
+    this.emit('selectPiece', this.state.diceValue);
+    this.emit('showRerollChoice', {
+      player: this.state.currentPlayer,
+      diceValue: this.state.diceValue,
+      rerollCost: cost,
+      canAfford: p.score >= cost
+    });
+    this.emit('stateChange', this.state);
+  }
+
   onMoveComplete(player, pieceIndex, fromPos, toPos) {
     const p = this.state.players[player];
     p.pieces[pieceIndex] = toPos;
@@ -1695,7 +1723,7 @@ class Room {
   }
 
   broadcastGameEvent(event, data) {
-    this.sendToAll('gameEvent', { event, ...data });
+    this.sendToAll('gameEvent', { event, data });
   }
 
   startGame() {
@@ -1704,7 +1732,7 @@ class Room {
     this.engine = new GameEngine();
 
     const eventsToForward = [
-      'stateChange', 'diceRoll', 'selectPiece', 'pieceMove',
+      'stateChange', 'diceRoll', 'selectPiece', 'autoSelectPiece', 'pieceMove',
       'pieceFinished', 'showTask', 'hideTask', 'showEvent', 'hideEvent',
       'showShop', 'hideShop', 'scoreChange', 'itemPurchased',
       'teleport', 'kicked', 'stackBonus', 'showClothesChoice',
@@ -1721,6 +1749,8 @@ class Room {
     });
 
     this.sendToAll('gameStart', {});
+    this.broadcastGameEvent('stateChange', this.engine.state);
+    this.broadcastGameEvent('turnChange', this.engine.state.currentPlayer);
   }
 }
 
@@ -1871,13 +1901,22 @@ function setupWebSocket(server) {
     switch (action) {
       case 'rollDice':
         engine.rollDice();
+        setTimeout(() => engine.onDiceAnimEnd(), 1350);
         break;
       case 'rerollDice':
         engine.rerollDice();
+        setTimeout(() => engine.onDiceAnimEnd(), 1350);
         break;
-      case 'movePiece':
-        engine.movePiece(payload?.pieceIndex);
+      case 'movePiece': {
+        const mp = engine.state.currentPlayer;
+        const mi = payload?.pieceIndex;
+        const mFrom = engine.state.players[mp].pieces[mi];
+        engine.movePiece(mi);
+        const mTo = Math.min(39, mFrom + Math.max(1, engine.state.diceValue + (engine.state.diceBonus || 0)));
+        const animMs = (mTo - mFrom) * 180 + 200;
+        setTimeout(() => engine.onMoveComplete(mp, mi, mFrom, mTo), animMs);
         break;
+      }
       case 'selectTask':
         engine.selectTask(payload?.taskIndex);
         break;
