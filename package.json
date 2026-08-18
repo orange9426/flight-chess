@@ -1,16 +1,17 @@
 {
-  "name": "miaoda-html-app",
-  "version": "0.1.0",
-  "private": true,
+  "name": "starry-flying-chess",
+  "version": "1.0.0",
+  "description": "星空飞行棋 - 双人联机网页游戏",
   "type": "module",
+  "main": "server.js",
   "scripts": {
-    "dev": "coding-html-devserver dev",
-    "build": "coding-html-devserver build"
+    "start": "node server.js",
+    "dev": "node server.js"
   },
-  "devDependencies": {
-    "@lark-apaas/coding-html-devserver": "^0.1.6"
+  "engines": {
+    "node": ">=18.0.0"
   },
   "dependencies": {
-    "ws": "^8.21.3"
+    "ws": "^8.16.0"
   }
 }

@@ -1,40 +1,61 @@
-# Miaoda HTML App
+# 星空飞行棋 · 双人联机
 
-Minimal single-file HTML app. dev/build 工具链由 [`@lark-apaas/coding-html-devserver`](https://www.npmjs.com/package/@lark-apaas/coding-html-devserver) 提供——vite 封装在内部，本项目不直接依赖 vite、也没有 `vite.config`。
+一款支持本地双人对战和在线联机的网页飞行棋游戏。
 
-## Structure
-
-```
-src/
-  index.html      # 单文件：HTML + 内联 <style> + 内联 <script type="module">
-package.json
-```
-
-## Scripts
+## 本地运行
 
 ```bash
-npm install         # 安装工具链
-npm run dev         # 启动 dev server（默认 8001），HMR 自动重载页面
-npm run build       # 纯拷贝 src/ → dist/output/（不打包、不加 hash，产物 = 源码）
+npm install
+npm start
 ```
 
-`dev` / `build` 背后是 `coding-html-devserver dev|build`。dev 借 vite 起 server 拿原生
-HMR；build **不走 vite build**，纯拷贝 `src/` 到 `dist/output/`，保证产物逐字等于源码。
+然后浏览器打开 http://localhost:3000
 
-## 环境变量
+## 部署到 Railway
 
-| 变量 | 默认 | 说明 |
-|---|---|---|
-| `CLIENT_DEV_PORT` | `8001` | dev server 监听端口 |
+### 方法一：通过 GitHub 自动部署
 
-dev server 不读 `CLIENT_BASE_PATH` 设 `base`：沙箱外部 URL 的 `/app/<appid>` prefix 由
-平台网关独家负责，dev server 自己再设 `base` 会跟网关叠加，导致需要
-`/app/<id>/app/<id>/` 两层才能访问。
+1. 在 GitHub 创建一个新仓库
+2. 将本项目所有文件推送到仓库：
+   ```bash
+   git init
+   git add .
+   git commit -m "init"
+   git branch -M main
+   git remote add origin https://github.com/你的用户名/你的仓库名.git
+   git push -u origin main
+   ```
+3. 打开 [Railway](https://railway.app)，用 GitHub 登录
+4. 点击 **New Project** → **Deploy from GitHub repo**
+5. 选择你刚推送的仓库
+6. Railway 会自动识别 Node.js 项目并部署
+7. 部署完成后，在 **Settings** → **Networking** 里生成一个公网域名
+8. 打开域名即可游戏，把链接发给朋友就能联机
 
-## Dev server endpoints
+### 方法二：Railway CLI
 
-- `/` → `src/index.html`（HMR 已启用）
-- `/dev/health` → `{ "ready": true }`（探活接口；server 真正 listening 后才返回 `ready: true`）
+```bash
+npm install -g @railway/cli
+railway login
+railway init
+railway up
+```
 
-沙箱网关接入时外部访问 `https://<host>/app/<appid>/`，网关把 `/app/<appid>` prefix
-剥掉转给 dev server，dev server 这边只看到根路径。
+## 游戏说明
+
+- 5×8 弓字形棋盘，从左下角起点走到右上角终点
+- 每玩家2枚棋子，初始15积分
+- 掷骰→选棋子移动→触发格子效果
+- 任务格：2选1任务，1-4分/5-8分两池独立洗牌
+- 事件格：30种随机事件，抽完洗牌
+- 商店格：1件随机装备+4件道具
+- 传送格：同列上升一层
+- 跨层需脱装备或花积分免脱
+- 碰撞踢人、叠棋再掷
+- 一方双棋到终点后，对方继续但每回合-10分，最终比积分
+
+## 技术栈
+
+- 前端：原生 HTML/CSS/JS（单文件）
+- 后端：Node.js + ws（WebSocket）
+- 无需数据库，房间状态在内存中

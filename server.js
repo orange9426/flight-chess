@@ -2,7 +2,7 @@
 //  飞行棋联机服务器
 //  - HTTP 静态文件服务（dist/ 或 src/）
 //  - WebSocket 房间系统
-//  - 服务端权威游戏引擎（移植自前端 LocalController）
+//  - 服务端权威游戏引擎
 // ============================================================
 import http from 'http';
 import { WebSocketServer } from 'ws';
@@ -15,18 +15,13 @@ const __dirname = fileURLToPath(new URL('.', import.meta.url));
 const PORT = process.env.PORT || 3000;
 
 // ============================================================
-//  游戏常量（与前端保持一致）
+//  游戏常量
 // ============================================================
 const CELL_TYPES = [
-  // pos 0-7: 第1层（最底，从左到右走）
   'start', 'task', 'task', 'event', 'task', 'teleport', 'task', 'task',
-  // pos 8-15: 第2层（从右往左走）
   'shop', 'event', 'task', 'task', 'task', 'teleport', 'task', 'task',
-  // pos 16-23: 第3层（从左到右走）
   'shop', 'task', 'event', 'task', 'task', 'task', 'teleport', 'task',
-  // pos 24-31: 第4层（从右往左走）
   'shop', 'task', 'task', 'event', 'task', 'task', 'teleport', 'task',
-  // pos 32-39: 第5层（最顶，从左到右走）
   'shop', 'task', 'task', 'task', 'task', 'event', 'task', 'end'
 ];
 
@@ -126,52 +121,68 @@ const EVENT_EFFECTS = {
   amnesia:        'eventEffect_amnesia'
 };
 
-const DEFAULT_TASKS_RAW = `大声唱一首歌|3
-模仿一种动物叫声|2
-说一个笑话|4
-夸对方一句|3
-原地转三圈|2
-做一个鬼脸|2
-学猫叫三声|1
-模仿班主任说话|4
-摆一个最酷的pose|2
-做十个俯卧撑|5
-用屁股写自己的名字|6
-学一段广告台词|6
-表演一个才艺|8
-做二十个深蹲|7
-学一首新歌副歌|5
-即兴rap一分钟|7
-模仿最讨厌的明星|5
-一口气喝完整杯水|8`;
-
-function parseTasks(raw) {
-  return raw.trim().split('\n').map((line, i) => {
-    const [text, reward] = line.split('|');
-    return { id: 'task_' + i, text: text.trim(), reward: parseInt(reward, 10) || 3 };
-  });
-}
+const DEFAULT_TASKS = [
+  { desc: '大声唱一首歌', reward: 3 },
+  { desc: '模仿一种动物叫声', reward: 2 },
+  { desc: '说一个笑话', reward: 4 },
+  { desc: '夸对方一句', reward: 3 },
+  { desc: '原地转三圈', reward: 2 },
+  { desc: '做一个鬼脸', reward: 2 },
+  { desc: '学猫叫三声', reward: 1 },
+  { desc: '模仿班主任说话', reward: 4 },
+  { desc: '摆一个最酷的pose', reward: 2 },
+  { desc: '做十个俯卧撑', reward: 5 },
+  { desc: '用屁股写自己的名字', reward: 6 },
+  { desc: '学一段广告台词', reward: 6 },
+  { desc: '表演一个才艺', reward: 8 },
+  { desc: '做二十个深蹲', reward: 7 },
+  { desc: '学一首新歌副歌', reward: 5 },
+  { desc: '即兴rap一分钟', reward: 7 },
+  { desc: '模仿最讨厌的明星', reward: 5 },
+  { desc: '一口气喝完整杯水', reward: 8 }
+];
 
 // ============================================================
-//  游戏引擎（服务端权威）
-//  逻辑与前端 LocalController 保持一致
-//  所有异步操作通过事件回调驱动，动画时间由服务端估算
+//  游戏引擎
 // ============================================================
 class GameEngine {
-  constructor() {
-    this.state = null;
+  constructor(taskList) {
+    this.tasks = taskList || DEFAULT_TASKS;
+    this.lowTierTasks = this.tasks.filter(t => t.reward <= 4);
+    this.highTierTasks = this.tasks.filter(t => t.reward >= 5);
+    this.lowTierDeck = this.shuffleArray([...this.lowTierTasks]);
+    this.highTierDeck = this.shuffleArray([...this.highTierTasks]);
+    this.eventDeck = this.shuffleArray([...EVENTS]);
+
     this.listeners = {};
-    this.tasks = [];
     this.currentTasks = [];
-    this.currentEvent = null;
     this.shopItems = [];
     this.pendingCellResolve = null;
     this.godRewardsPending = null;
-    this.lowTierDeck = [];
-    this.highTierDeck = [];
-    this.eventDeck = [];
-    // 服务端用回调驱动异步流程，不依赖 UI 动画
-    this._animationDelay = 50; // 服务端快速结算
+
+    const makeEquipment = () => ([
+      { id: 'top', name: '上衣', icon: '👕', on: true },
+      { id: 'pants', name: '裤子', icon: '👖', on: true },
+      { id: 'bra', name: '内衣（特殊）', icon: '🎀', on: true },
+      { id: 'briefs', name: '内裤', icon: '🩲', on: true }
+    ]);
+
+    this.state = {
+      currentPlayer: 0,
+      phase: 'idle',
+      diceValue: 0,
+      diceBonus: 0,
+      rerollCount: 0,
+      players: [
+        { score: 15, pieces: [0, 0], finished: [false, false], equipment: makeEquipment(), skipClothesStreak: 0, allDone: false, inventory: {} },
+        { score: 15, pieces: [0, 0], finished: [false, false], equipment: makeEquipment(), skipClothesStreak: 0, allDone: false, inventory: {} }
+      ],
+      winner: null,
+      endgame: false,
+      extraTurn: null,
+      autoMovePending: false,
+      autoMoveSkipClothes: false
+    };
   }
 
   on(event, callback) {
@@ -185,418 +196,13 @@ class GameEngine {
     }
   }
 
-  initGame(taskList) {
-    this.tasks = taskList;
-    this.lowTierTasks = taskList.filter(t => t.reward <= 4);
-    this.highTierTasks = taskList.filter(t => t.reward >= 5);
-    this.lowTierDeck = this.shuffleArray([...this.lowTierTasks]);
-    this.highTierDeck = this.shuffleArray([...this.highTierTasks]);
-    this.eventDeck = this.shuffleArray([...EVENTS]);
-    const makeEquipment = () => ([
-      { id: 'top', name: '上衣', icon: '👕', on: true },
-      { id: 'pants', name: '裤子', icon: '👖', on: true },
-      { id: 'bra', name: '内衣（特殊）', icon: '🎀', on: true },
-      { id: 'briefs', name: '内裤', icon: '🩲', on: true }
-    ]);
-    this.state = {
-      currentPlayer: 0,
-      phase: 'idle',
-      diceValue: 0,
-      diceBonus: 0,
-      rerollCount: 0,
-      autoMovePending: false,
-      autoMoveSkipClothes: false,
-      players: [
-        { score: 15, pieces: [0, 0], finished: [false, false], equipment: makeEquipment(), skipClothesStreak: 0, allDone: false, inventory: {} },
-        { score: 15, pieces: [0, 0], finished: [false, false], equipment: makeEquipment(), skipClothesStreak: 0, allDone: false, inventory: {} }
-      ],
-      winner: null,
-      endgame: false,
-      extraTurn: null
-    };
-    this.emit('stateChange', this.state);
-  }
-
-  rollDice(playerIdx) {
-    if (this.state.phase !== 'idle') return false;
-    if (playerIdx !== this.state.currentPlayer) return false;
-    const p = this.state.players[this.state.currentPlayer];
-    if (p.allDone) { this.endTurn(); return false; }
-
-    this.state.phase = 'rolling';
-    this._doDiceRollEffects();
-    this.emit('diceRoll', { value: this.state.diceValue, rerollCount: this.state.rerollCount, player: this.state.currentPlayer });
-    this.emit('stateChange', this.state);
-    // 服务端：骰子动画结束后直接进入 selecting（客户端播放动画）
-    setTimeout(() => this._onDiceAnimEnd(), 200);
-    return true;
-  }
-
-  rerollDice(playerIdx) {
-    if (this.state.phase !== 'selecting') return false;
-    if (playerIdx !== this.state.currentPlayer) return false;
-    const p = this.state.players[this.state.currentPlayer];
-    const cost = (this.state.rerollCount + 1) * 2;
-    if (p.score < cost) return false;
-
-    p.score -= cost;
-    this.state.rerollCount += 1;
-    this.emit('scoreChange', { player: this.state.currentPlayer, delta: -cost, score: p.score });
-
-    this.state.phase = 'rolling';
-    this._doDiceRollEffects();
-    this.emit('diceRoll', { value: this.state.diceValue, rerollCount: this.state.rerollCount, isReroll: true, player: this.state.currentPlayer });
-    this.emit('stateChange', this.state);
-    setTimeout(() => this._onDiceAnimEnd(), 200);
-    return true;
-  }
-
-  _doDiceRollEffects() {
-    const currentPlayer = this.state.currentPlayer;
-    const enemy = 1 - currentPlayer;
-
-    let value = Math.floor(Math.random() * 6) + 1;
-    let bonusSteps = 0;
-    let enemyPenalty = 0;
-
-    if (this.hasItem(currentPlayer, 'cheatDice')) {
-      value = 6;
-      this.useItem(currentPlayer, 'cheatDice');
-      this.emit('itemEffect', { player: currentPlayer, itemId: 'cheatDice', detail: '作弊骰子！必出6点' });
+  shuffleArray(arr) {
+    const a = [...arr];
+    for (let i = a.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [a[i], a[j]] = [a[j], a[i]];
     }
-    if (this.hasItem(currentPlayer, 'luckyDice')) {
-      bonusSteps += 2;
-      this.useItem(currentPlayer, 'luckyDice');
-      this.emit('itemEffect', { player: currentPlayer, itemId: 'luckyDice', detail: '幸运骰子！移动+2' });
-    }
-    if (this.hasItem(enemy, 'curseDice')) {
-      enemyPenalty = 1 + Math.floor(Math.random() * 2);
-      this.useItem(enemy, 'curseDice');
-      this.emit('itemEffect', { player: enemy, itemId: 'curseDice', detail: `诅咒骰子！对方-${enemyPenalty}格` });
-    }
-
-    this.state.diceValue = value;
-    this.state.diceBonus = bonusSteps - enemyPenalty;
-
-    if (this.hasItem(currentPlayer, 'autoDice')) {
-      this.useItem(currentPlayer, 'autoDice');
-      this.state.autoMovePending = true;
-      this.emit('itemEffect', { player: currentPlayer, itemId: 'autoDice', detail: '自动骰子！自动选择棋子' });
-    }
-  }
-
-  _onDiceAnimEnd() {
-    this.state.phase = 'selecting';
-    const p = this.state.players[this.state.currentPlayer];
-    const cost = (this.state.rerollCount + 1) * 2;
-    this.emit('selectPiece', this.state.diceValue);
-    this.emit('showRerollChoice', {
-      player: this.state.currentPlayer,
-      diceValue: this.state.diceValue,
-      rerollCost: cost,
-      canAfford: p.score >= cost
-    });
-
-    if (this.state.autoMovePending) {
-      for (let i = 0; i < 2; i++) {
-        if (!p.finished[i] && p.pieces[i] < 39) {
-          setTimeout(() => this.movePiece(this.state.currentPlayer, i), 200);
-          break;
-        }
-      }
-    }
-  }
-
-  movePiece(playerIdx, pieceIndex) {
-    if (this.state.phase !== 'selecting') return false;
-    if (playerIdx !== this.state.currentPlayer) return false;
-    const p = this.state.players[playerIdx];
-    if (p.finished[pieceIndex]) return false;
-
-    this.state.phase = 'moving';
-    this.emit('stateChange', this.state);
-
-    const fromPos = p.pieces[pieceIndex];
-    const bonus = this.state.diceBonus || 0;
-    const steps = Math.max(1, this.state.diceValue + bonus);
-    const toPos = Math.min(fromPos + steps, 39);
-
-    if (this.state.autoMovePending) {
-      this.state.autoMoveSkipClothes = true;
-      this.state.autoMovePending = false;
-    }
-
-    this.emit('pieceMove', {
-      player: playerIdx,
-      pieceIndex,
-      fromPos,
-      toPos
-    });
-
-    // 服务端：棋子移动结束后直接结算
-    setTimeout(() => this._onMoveComplete(playerIdx, pieceIndex, fromPos, toPos), 200);
-    return true;
-  }
-
-  _onMoveComplete(player, pieceIndex, fromPos, toPos) {
-    const p = this.state.players[player];
-    p.pieces[pieceIndex] = toPos;
-
-    if (toPos >= 39) {
-      p.finished[pieceIndex] = true;
-      this.emit('pieceFinished', { player, pieceIndex });
-      this.emit('stateChange', this.state);
-
-      if (p.finished.every(f => f)) {
-        p.allDone = true;
-        this.state.endgame = this.state.players.some(x => !x.allDone);
-
-        if (this.state.players.every(x => x.allDone)) {
-          this.state.phase = 'over';
-          const s0 = this.state.players[0].score;
-          const s1 = this.state.players[1].score;
-          let winner;
-          if (s0 > s1) winner = 0;
-          else if (s1 > s0) winner = 1;
-          else winner = -1;
-          this.state.winner = winner;
-          setTimeout(() => this.emit('victory', { winner, score0: s0, score1: s1 }), 400);
-          this.emit('stateChange', this.state);
-          return;
-        }
-      }
-
-      this.endTurn();
-      return;
-    }
-
-    const fromRow = this.posToRowCol(fromPos).row;
-    const toRow = this.posToRowCol(toPos).row;
-    const onClothes = p.equipment.filter(e => e.on).length;
-    const isNormalMove = fromPos !== undefined && fromPos !== toPos;
-
-    if (isNormalMove && toRow > fromRow && onClothes > 0) {
-      if (this.state.autoMoveSkipClothes) {
-        this.state.autoMoveSkipClothes = false;
-        this._resolveCollisionThenCell(player, pieceIndex, toPos);
-        return;
-      }
-      if (this.hasItem(player, 'freeClothes')) {
-        this.useItem(player, 'freeClothes');
-        p.skipClothesStreak = 0;
-        this.emit('itemEffect', { player, itemId: 'freeClothes', detail: '免脱卡生效！' });
-        this._resolveCollisionThenCell(player, pieceIndex, toPos);
-        return;
-      }
-      this.state.phase = 'clothesChoice';
-      this.emit('stateChange', this.state);
-      const price = this.getSkipClothesPrice(player);
-      this.emit('showClothesChoice', {
-        player,
-        pieceIndex,
-        pos: toPos,
-        price,
-        canAfford: p.score >= price
-      });
-      return;
-    }
-
-    this._resolveCollisionThenCell(player, pieceIndex, toPos);
-  }
-
-  getSkipClothesPrice(player) {
-    const streak = this.state.players[player].skipClothesStreak || 0;
-    return 10 + streak * 5;
-  }
-
-  takeOffEquipment(player, pieceIndex, pos, equipIndex) {
-    if (this.state.phase !== 'clothesChoice') return false;
-    if (player !== this.state.currentPlayer) return false;
-    const p = this.state.players[player];
-    if (!p.equipment[equipIndex] || !p.equipment[equipIndex].on) return false;
-    const equipId = p.equipment[equipIndex].id;
-    p.equipment[equipIndex].on = false;
-    p.skipClothesStreak = 0;
-
-    const enemy = 1 - player;
-    if (this.hasItem(enemy, 'thiefGlove')) {
-      const enemyEq = this.state.players[enemy].equipment.find(e => e.id === equipId);
-      if (enemyEq && !enemyEq.on) {
-        enemyEq.on = true;
-        this.useItem(enemy, 'thiefGlove');
-        this.emit('equipmentChange', { player: enemy, action: 'steal', equipId });
-        this.emit('itemEffect', { player: enemy, itemId: 'thiefGlove', detail: `窃贼手套！获得${equipId}` });
-      }
-    }
-
-    this.emit('equipmentChange', { player, equipIndex, action: 'takeoff' });
-    this.emit('stateChange', this.state);
-
-    this.emit('hideClothesChoice');
-    this._resolveCollisionThenCell(player, pieceIndex, pos);
-    return true;
-  }
-
-  buySkipClothes(player, pieceIndex, pos) {
-    if (this.state.phase !== 'clothesChoice') return false;
-    if (player !== this.state.currentPlayer) return false;
-    const p = this.state.players[player];
-    const price = this.getSkipClothesPrice(player);
-    if (p.score < price) return false;
-    p.score -= price;
-    p.skipClothesStreak = (p.skipClothesStreak || 0) + 1;
-    this.emit('scoreChange', { player, delta: -price, score: p.score });
-    this.emit('equipmentChange', { player, action: 'skip', price });
-    this.emit('stateChange', this.state);
-
-    this.emit('hideClothesChoice');
-    this._resolveCollisionThenCell(player, pieceIndex, pos);
-    return true;
-  }
-
-  _resolveCollisionThenCell(player, pieceIndex, pos) {
-    this.state.phase = 'resolving';
-    this.emit('stateChange', this.state);
-
-    this.checkCollision(player, pieceIndex, pos, (skipCellEffect) => {
-      if (skipCellEffect) return;
-      this.resolveCellEffect(player, pieceIndex, pos);
-    });
-  }
-
-  resolveCellEffect(player, pieceIndex, pos) {
-    const cellType = CELL_TYPES[pos];
-
-    const finishAndEndTurn = () => {
-      this.endTurn();
-    };
-
-    switch (cellType) {
-      case 'task':
-        const task1 = this.drawLowTierTask();
-        const task2 = this.drawHighTierTask();
-        this.currentTasks = [task1, task2].filter(Boolean);
-        this.emit('showTask', { player, tasks: this.currentTasks });
-        this.pendingCellResolve = { player, pieceIndex, pos, afterResolve: finishAndEndTurn };
-        break;
-
-      case 'event':
-        this.currentEvent = this.drawEvent();
-        this.emit('showEvent', { player, event: this.currentEvent });
-        this.pendingCellResolve = {
-          player, pieceIndex, pos,
-          afterResolve: () => {
-            this.state.phase = 'resolving';
-            this.emit('stateChange', this.state);
-            this.triggerEventEffect(this.currentEvent, {
-              player, pieceIndex, pos,
-              onDone: () => { this.endTurn(); }
-            });
-          }
-        };
-        break;
-
-      case 'teleport':
-        this.doTeleport(player, pieceIndex, pos);
-        break;
-
-      case 'shop':
-        this.openShop(player);
-        this.pendingCellResolve = { player, pieceIndex, pos, afterResolve: finishAndEndTurn };
-        break;
-
-      default:
-        finishAndEndTurn();
-    }
-  }
-
-  selectTask(playerIdx, taskIndex) {
-    if (playerIdx !== this.state.currentPlayer) return false;
-    const task = this.currentTasks[taskIndex];
-    if (!task) return false;
-    const currentPlayer = this.state.currentPlayer;
-    const p = this.state.players[currentPlayer];
-    const enemy = 1 - currentPlayer;
-    const missingEquip = p.equipment.filter(e => !e.on).length;
-    const bonus = missingEquip * 2;
-    let totalReward = task.reward + bonus;
-
-    if (this.hasItem(currentPlayer, 'freeCard') && this.currentTasks.length >= 2) {
-      this.useItem(currentPlayer, 'freeCard');
-      const otherTask = this.currentTasks[1 - taskIndex];
-      if (otherTask) totalReward += otherTask.reward + bonus;
-      this.emit('itemEffect', { player: currentPlayer, itemId: 'freeCard', detail: '白嫖卡！两个任务都给' });
-    }
-
-    if (this.hasItem(currentPlayer, 'doubleScore')) {
-      this.useItem(currentPlayer, 'doubleScore');
-      totalReward *= 2;
-      this.emit('itemEffect', { player: currentPlayer, itemId: 'doubleScore', detail: '双倍积分！' });
-    }
-
-    let rewardPlayer = currentPlayer;
-    if (this.hasItem(enemy, 'switchCard')) {
-      this.useItem(enemy, 'switchCard');
-      rewardPlayer = enemy;
-      this.emit('itemEffect', { player: enemy, itemId: 'switchCard', detail: '调包卡！积分归我' });
-    }
-
-    this.state.players[rewardPlayer].score += totalReward;
-    this.emit('scoreChange', { player: rewardPlayer, delta: totalReward, score: this.state.players[rewardPlayer].score });
-    this.emit('stateChange', this.state);
-
-    this.emit('hideTask');
-    this.finishCellResolve();
-    return true;
-  }
-
-  closeEvent(playerIdx) {
-    if (playerIdx !== this.state.currentPlayer) return false;
-    this.emit('hideEvent');
-    this.finishCellResolve();
-    return true;
-  }
-
-  finishCellResolve() {
-    if (this.pendingCellResolve) {
-      const { player, pieceIndex, pos, afterResolve } = this.pendingCellResolve;
-      this.pendingCellResolve = null;
-      afterResolve();
-    }
-  }
-
-  doTeleport(player, pieceIndex, pos) {
-    const { row, col } = this.posToRowCol(pos);
-    const enemy = 1 - player;
-    let dir = 1;
-    if (this.hasItem(enemy, 'teleportTrap')) {
-      this.useItem(enemy, 'teleportTrap');
-      dir = -1;
-      this.emit('itemEffect', { player: enemy, itemId: 'teleportTrap', detail: '传送陷阱！改为向下传送' });
-    }
-    const newRow = row + dir;
-    if (newRow > 4 || newRow < 0) { this._resolveCollisionThenCell(player, pieceIndex, pos); return; }
-
-    const newPos = this.rowColToPos(newRow, col);
-    const p = this.state.players[player];
-    p.pieces[pieceIndex] = newPos;
-
-    this.emit('teleport', { player, pieceIndex, fromPos: pos, toPos: newPos });
-    this.emit('stateChange', this.state);
-
-    setTimeout(() => {
-      if (newPos >= 39) {
-        this._onMoveComplete(player, pieceIndex, newPos, newPos);
-      } else if (CELL_TYPES[newPos] === 'teleport' && dir === 1) {
-        this.checkCollision(player, pieceIndex, newPos, (skip) => {
-          if (!skip) {
-            this.doTeleport(player, pieceIndex, newPos);
-          }
-        });
-      } else {
-        this._resolveCollisionThenCell(player, pieceIndex, newPos);
-      }
-    }, 150);
+    return a;
   }
 
   posToRowCol(pos) {
@@ -613,201 +219,18 @@ class GameEngine {
     return row * 8 + colInRow;
   }
 
-  checkCollision(moverPlayer, moverPiece, pos, callback) {
-    if (pos === 0 || pos >= 39) { callback(false); return; }
+  getRow(pos) { return Math.floor(pos / 8); }
 
-    const otherPlayer = 1 - moverPlayer;
-    const otherP = this.state.players[otherPlayer];
-    const moverP = this.state.players[moverPlayer];
-
-    const enemyPiecesHere = [];
-    for (let i = 0; i < 2; i++) {
-      if (!otherP.finished[i] && otherP.pieces[i] === pos) {
-        enemyPiecesHere.push(i);
-      }
-    }
-
-    if (enemyPiecesHere.length > 0) {
-      if (this.hasItem(moverPlayer, 'immovable')) { callback(false); return; }
-      const victim = otherPlayer;
-      const attacker = moverPlayer;
-
-      if (this.hasItem(victim, 'immovable')) {
-        this.useItem(victim, 'immovable');
-        this.emit('itemEffect', { player: victim, itemId: 'immovable', detail: '不动甲！反踢对方' });
-        const { row, col } = this.posToRowCol(pos);
-        const newRow = row - 1;
-        const newPos = newRow < 0 ? 0 : this.rowColToPos(newRow, col);
-        this.kickPiecesDown([{ player: attacker, index: moverPiece }], newPos, () => {
-          callback(false);
-        });
-        return;
-      }
-
-      if (this.hasItem(victim, 'thornArmor')) {
-        this.useItem(victim, 'thornArmor');
-        this.emit('itemEffect', { player: victim, itemId: 'thornArmor', detail: '荆棘甲！对方失一件装备' });
-        this.loseRandomEquip(attacker);
-      }
-
-      const { row, col } = this.posToRowCol(pos);
-      const newRow = row - 1;
-      const newPos = newRow < 0 ? 0 : this.rowColToPos(newRow, col);
-
-      const pieces = enemyPiecesHere.map(i => ({ player: otherPlayer, index: i }));
-      this.kickPiecesDown(pieces, newPos, () => {
-        callback(false);
-      });
-      return;
-    }
-
-    let friendlyHere = false;
-    for (let i = 0; i < 2; i++) {
-      if (i !== moverPiece && !moverP.finished[i] && moverP.pieces[i] === pos) {
-        friendlyHere = true;
-        break;
-      }
-    }
-
-    if (friendlyHere) {
-      if (this.hasItem(moverPlayer, 'springArmor')) {
-        this.useItem(moverPlayer, 'springArmor');
-        this.emit('itemEffect', { player: moverPlayer, itemId: 'springArmor', detail: '弹簧甲！叠棋变上一层' });
-        const { row } = this.posToRowCol(pos);
-        if (row >= 4) {
-          callback(false);
-          return;
-        }
-        const newPos = this.sameColAbove(pos);
-        moverP.pieces[moverPiece] = newPos;
-        this.emit('pieceMoved', { player: moverPlayer, pieceIndex: moverPiece, fromPos: pos, toPos: newPos });
-        this.emit('stateChange', this.state);
-        setTimeout(() => {
-          this.checkCollision(moverPlayer, moverPiece, newPos, (skip) => {
-            if (skip) return;
-            this.resolveCellEffect(moverPlayer, moverPiece, newPos);
-          });
-        }, 150);
-        callback(true);
-        return;
-      }
-
-      this.emit('stackBonus', { player: moverPlayer, pieceIndex: moverPiece, pos });
-      this.state.phase = 'idle';
-      this.state.diceValue = 0;
-      this.state.rerollCount = 0;
-      this.emit('stateChange', this.state);
-      callback(true);
-      return;
-    }
-
-    callback(false);
+  sameColAbove(pos) {
+    const { row, col } = this.posToRowCol(pos);
+    if (row >= 4) return null;
+    return this.rowColToPos(row + 1, col);
   }
 
-  kickPiecesDown(pieces, targetPos, done) {
-    if (targetPos === 0) {
-      pieces.forEach(p => {
-        const tp = this.state.players[p.player];
-        if (!tp.finished[p.index]) tp.pieces[p.index] = targetPos;
-      });
-      this.emit('kicked', { pieces, toPos: targetPos });
-      this.emit('stateChange', this.state);
-      setTimeout(done, 200);
-      return;
-    }
-
-    const existing = [];
-    for (let pl = 0; pl < 2; pl++) {
-      for (let i = 0; i < 2; i++) {
-        const tp = this.state.players[pl];
-        if (tp.finished[i]) continue;
-        if (tp.pieces[i] !== targetPos) continue;
-        if (!pieces.some(p => p.player === pl && p.index === i)) {
-          existing.push({ player: pl, index: i });
-        }
-      }
-    }
-
-    pieces.forEach(p => {
-      const tp = this.state.players[p.player];
-      if (!tp.finished[p.index]) tp.pieces[p.index] = targetPos;
-    });
-    this.emit('kicked', { pieces, toPos: targetPos });
-    this.emit('stateChange', this.state);
-
-    if (existing.length === 0) {
-      setTimeout(done, 200);
-      return;
-    }
-
-    const { row, col } = this.posToRowCol(targetPos);
-    const newRow = row - 1;
-    const newPos = newRow < 0 ? 0 : this.rowColToPos(newRow, col);
-
-    setTimeout(() => {
-      this.kickPiecesDown(existing, newPos, done);
-    }, 200);
-  }
-
-  endTurn() {
-    if (this.state.extraTurn && this.state.extraTurn.player === this.state.currentPlayer && this.state.extraTurn.count > 0) {
-      this.state.extraTurn.count -= 1;
-      const remaining = this.state.extraTurn.count;
-      if (remaining <= 0) this.state.extraTurn = null;
-      this.state.rerollCount = 0;
-      this.state.phase = 'idle';
-      this.state.diceValue = 0;
-      this.emit('extraTurn', { player: this.state.currentPlayer, remaining });
-      this.emit('turnChange', this.state.currentPlayer);
-      this.emit('stateChange', this.state);
-      return;
-    }
-
-    let next = 1 - this.state.currentPlayer;
-    const nextP = this.state.players[next];
-
-    if (nextP.allDone) {
-      this.state.rerollCount = 0;
-      this.state.phase = 'idle';
-      this.state.diceValue = 0;
-
-      const curP = this.state.players[this.state.currentPlayer];
-      if (!curP.allDone && this.state.endgame) {
-        const penalty = Math.min(10, curP.score);
-        curP.score -= penalty;
-        this.emit('scoreChange', { player: this.state.currentPlayer, delta: -penalty, score: curP.score });
-        this.emit('endgamePenalty', { player: this.state.currentPlayer, penalty });
-      }
-
-      this.emit('turnChange', this.state.currentPlayer);
-      this.emit('stateChange', this.state);
-      return;
-    }
-
-    this.state.currentPlayer = next;
-    this.state.rerollCount = 0;
-    this.state.phase = 'idle';
-    this.state.diceValue = 0;
-
-    const curP = this.state.players[next];
-    if (!curP.allDone && this.state.endgame) {
-      const penalty = Math.min(10, curP.score);
-      curP.score -= penalty;
-      this.emit('scoreChange', { player: next, delta: -penalty, score: curP.score });
-      this.emit('endgamePenalty', { player: next, penalty });
-    }
-
-    this.emit('turnChange', this.state.currentPlayer);
-    this.emit('stateChange', this.state);
-  }
-
-  shuffleArray(arr) {
-    const a = [...arr];
-    for (let i = a.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [a[i], a[j]] = [a[j], a[i]];
-    }
-    return a;
+  sameColBelow(pos) {
+    const { row, col } = this.posToRowCol(pos);
+    if (row <= 0) return 0;
+    return this.rowColToPos(row - 1, col);
   }
 
   drawLowTierTask() {
@@ -907,18 +330,9 @@ class GameEngine {
     return eq ? eq.on : false;
   }
 
-  getRow(pos) { return Math.floor(pos / 8); }
-
-  sameColAbove(pos) {
-    const { row, col } = this.posToRowCol(pos);
-    if (row >= 4) return null;
-    return this.rowColToPos(row + 1, col);
-  }
-
-  sameColBelow(pos) {
-    const { row, col } = this.posToRowCol(pos);
-    if (row <= 0) return 0;
-    return this.rowColToPos(row - 1, col);
+  getSkipClothesPrice(player) {
+    const streak = this.state.players[player].skipClothesStreak || 0;
+    return 10 + streak * 5;
   }
 
   piecesAtPos(pos, exclude = []) {
@@ -935,14 +349,629 @@ class GameEngine {
     return result;
   }
 
+  rollDice() {
+    if (this.state.phase !== 'idle') return;
+    const p = this.state.players[this.state.currentPlayer];
+    if (p.allDone) { this.endTurn(); return; }
+
+    this.state.phase = 'rolling';
+    this._doDiceRollEffects();
+    this.emit('diceRoll', { value: this.state.diceValue, rerollCount: this.state.rerollCount });
+    this.emit('stateChange', this.state);
+  }
+
+  rerollDice() {
+    if (this.state.phase !== 'selecting') return;
+    const p = this.state.players[this.state.currentPlayer];
+    const cost = (this.state.rerollCount + 1) * 2;
+    if (p.score < cost) return;
+
+    p.score -= cost;
+    this.state.rerollCount += 1;
+    this.emit('scoreChange', { player: this.state.currentPlayer, delta: -cost, score: p.score });
+
+    this.state.phase = 'rolling';
+    this._doDiceRollEffects();
+    this.emit('diceRoll', { value: this.state.diceValue, rerollCount: this.state.rerollCount, isReroll: true });
+    this.emit('stateChange', this.state);
+  }
+
+  _doDiceRollEffects() {
+    const currentPlayer = this.state.currentPlayer;
+    const enemy = 1 - currentPlayer;
+
+    let value = Math.floor(Math.random() * 6) + 1;
+    let bonusSteps = 0;
+    let enemyPenalty = 0;
+
+    if (this.hasItem(currentPlayer, 'cheatDice')) {
+      value = 6;
+      this.useItem(currentPlayer, 'cheatDice');
+      this.emit('itemEffect', { player: currentPlayer, itemId: 'cheatDice', detail: '作弊骰子！必出6点' });
+    }
+    if (this.hasItem(currentPlayer, 'luckyDice')) {
+      bonusSteps += 2;
+      this.useItem(currentPlayer, 'luckyDice');
+      this.emit('itemEffect', { player: currentPlayer, itemId: 'luckyDice', detail: '幸运骰子！移动+2' });
+    }
+    if (this.hasItem(enemy, 'curseDice')) {
+      enemyPenalty = 1 + Math.floor(Math.random() * 2);
+      this.useItem(enemy, 'curseDice');
+      this.emit('itemEffect', { player: enemy, itemId: 'curseDice', detail: `诅咒骰子！对方-${enemyPenalty}格` });
+    }
+
+    this.state.diceValue = value;
+    this.state.diceBonus = bonusSteps - enemyPenalty;
+
+    if (this.hasItem(currentPlayer, 'autoDice')) {
+      this.useItem(currentPlayer, 'autoDice');
+      this.state.autoMovePending = true;
+      this.emit('itemEffect', { player: currentPlayer, itemId: 'autoDice', detail: '自动骰子！自动选择棋子' });
+    }
+  }
+
+  onDiceAnimationEnd() {
+    this.state.phase = 'selecting';
+    const p = this.state.players[this.state.currentPlayer];
+    const cost = (this.state.rerollCount + 1) * 2;
+    this.emit('selectPiece', this.state.diceValue);
+    this.emit('showRerollChoice', {
+      player: this.state.currentPlayer,
+      diceValue: this.state.diceValue,
+      rerollCost: cost,
+      canAfford: p.score >= cost
+    });
+    this.emit('stateChange', this.state);
+  }
+
+  movePiece(pieceIndex) {
+    if (this.state.phase !== 'selecting') return;
+    const p = this.state.players[this.state.currentPlayer];
+    if (p.finished[pieceIndex]) return;
+
+    this.state.phase = 'moving';
+    this.emit('stateChange', this.state);
+
+    const fromPos = p.pieces[pieceIndex];
+    const bonus = this.state.diceBonus || 0;
+    const steps = Math.max(1, this.state.diceValue + bonus);
+    const toPos = Math.min(fromPos + steps, 39);
+
+    if (this.state.autoMovePending) {
+      this.state.autoMoveSkipClothes = true;
+      this.state.autoMovePending = false;
+    }
+
+    this.emit('pieceMove', {
+      player: this.state.currentPlayer,
+      pieceIndex,
+      fromPos,
+      toPos
+    });
+  }
+
+  onMoveComplete(player, pieceIndex, fromPos, toPos) {
+    const p = this.state.players[player];
+    p.pieces[pieceIndex] = toPos;
+
+    if (toPos >= 39) {
+      p.finished[pieceIndex] = true;
+      this.emit('pieceFinished', { player, pieceIndex });
+      this.emit('stateChange', this.state);
+
+      if (p.finished.every(f => f)) {
+        p.allDone = true;
+        this.state.endgame = this.state.players.some(x => !x.allDone);
+
+        if (this.state.players.every(x => x.allDone)) {
+          this.state.phase = 'over';
+          const s0 = this.state.players[0].score;
+          const s1 = this.state.players[1].score;
+          let winner;
+          if (s0 > s1) winner = 0;
+          else if (s1 > s0) winner = 1;
+          else winner = -1;
+          this.state.winner = winner;
+          this.emit('victory', { winner, score0: s0, score1: s1 });
+          this.emit('stateChange', this.state);
+          return;
+        }
+      }
+
+      this.endTurn();
+      return;
+    }
+
+    const fromRow = this.posToRowCol(fromPos).row;
+    const toRow = this.posToRowCol(toPos).row;
+    const onClothes = p.equipment.filter(e => e.on).length;
+    const isNormalMove = fromPos !== undefined && fromPos !== toPos;
+
+    if (isNormalMove && toRow > fromRow && onClothes > 0) {
+      if (this.state.autoMoveSkipClothes) {
+        this.state.autoMoveSkipClothes = false;
+        this.resolveCollisionThenCell(player, pieceIndex, toPos);
+        return;
+      }
+      if (this.hasItem(player, 'freeClothes')) {
+        this.useItem(player, 'freeClothes');
+        p.skipClothesStreak = 0;
+        this.emit('itemEffect', { player, itemId: 'freeClothes', detail: '免脱卡生效！' });
+        this.resolveCollisionThenCell(player, pieceIndex, toPos);
+        return;
+      }
+      this.state.phase = 'clothesChoice';
+      this.emit('stateChange', this.state);
+      const price = this.getSkipClothesPrice(player);
+      this.emit('showClothesChoice', {
+        player,
+        pieceIndex,
+        pos: toPos,
+        price,
+        canAfford: p.score >= price
+      });
+      return;
+    }
+
+    this.resolveCollisionThenCell(player, pieceIndex, toPos);
+  }
+
+  takeOffEquipment(player, pieceIndex, pos, equipIndex) {
+    const p = this.state.players[player];
+    if (!p.equipment[equipIndex] || !p.equipment[equipIndex].on) return;
+    const equipId = p.equipment[equipIndex].id;
+    p.equipment[equipIndex].on = false;
+    p.skipClothesStreak = 0;
+
+    const enemy = 1 - player;
+    if (this.hasItem(enemy, 'thiefGlove')) {
+      const enemyEq = this.state.players[enemy].equipment.find(e => e.id === equipId);
+      if (enemyEq && !enemyEq.on) {
+        enemyEq.on = true;
+        this.useItem(enemy, 'thiefGlove');
+        this.emit('equipmentChange', { player: enemy, action: 'steal', equipId });
+        this.emit('itemEffect', { player: enemy, itemId: 'thiefGlove', detail: `窃贼手套！获得${equipId}` });
+      }
+    }
+
+    this.emit('equipmentChange', { player, equipIndex, action: 'takeoff' });
+    this.emit('stateChange', this.state);
+    this.emit('hideClothesChoice');
+    this.resolveCollisionThenCell(player, pieceIndex, pos);
+  }
+
+  buySkipClothes(player, pieceIndex, pos) {
+    const p = this.state.players[player];
+    const price = this.getSkipClothesPrice(player);
+    if (p.score < price) return;
+    p.score -= price;
+    p.skipClothesStreak = (p.skipClothesStreak || 0) + 1;
+    this.emit('scoreChange', { player, delta: -price, score: p.score });
+    this.emit('equipmentChange', { player, action: 'skip', price });
+    this.emit('stateChange', this.state);
+    this.emit('hideClothesChoice');
+    this.resolveCollisionThenCell(player, pieceIndex, pos);
+  }
+
+  resolveCollisionThenCell(player, pieceIndex, pos) {
+    this.state.phase = 'resolving';
+    this.emit('stateChange', this.state);
+
+    this.checkCollision(player, pieceIndex, pos, (skipCellEffect) => {
+      if (skipCellEffect) return;
+      this.resolveCellEffect(player, pieceIndex, pos);
+    });
+  }
+
+  resolveCellEffect(player, pieceIndex, pos) {
+    const cellType = CELL_TYPES[pos];
+    const finishAndEndTurn = () => { this.endTurn(); };
+
+    switch (cellType) {
+      case 'task':
+        const task1 = this.drawLowTierTask();
+        const task2 = this.drawHighTierTask();
+        this.currentTasks = [task1, task2].filter(Boolean);
+        this.emit('showTask', { player, tasks: this.currentTasks });
+        this.pendingCellResolve = { player, pieceIndex, pos, afterResolve: finishAndEndTurn };
+        break;
+      case 'event':
+        const event = this.drawEvent();
+        this.emit('showEvent', { player, event });
+        this.pendingCellResolve = { player, pieceIndex, pos, afterResolve: () => {
+          this.state.phase = 'resolving';
+          this.emit('stateChange', this.state);
+          this.triggerEventEffect(event, {
+            player, pieceIndex, pos,
+            onDone: () => { this.endTurn(); }
+          });
+        }};
+        break;
+      case 'teleport':
+        this.doTeleport(player, pieceIndex, pos);
+        break;
+      case 'shop':
+        this.openShop(player);
+        this.pendingCellResolve = { player, pieceIndex, pos, afterResolve: finishAndEndTurn };
+        break;
+      default:
+        finishAndEndTurn();
+    }
+  }
+
+  selectTask(taskIndex) {
+    const task = this.currentTasks[taskIndex];
+    if (!task) return;
+    const currentPlayer = this.state.currentPlayer;
+    const p = this.state.players[currentPlayer];
+    const enemy = 1 - currentPlayer;
+    const missingEquip = p.equipment.filter(e => !e.on).length;
+    const bonus = missingEquip * 2;
+    let totalReward = task.reward + bonus;
+
+    if (this.hasItem(currentPlayer, 'freeCard') && this.currentTasks.length >= 2) {
+      this.useItem(currentPlayer, 'freeCard');
+      const otherTask = this.currentTasks[1 - taskIndex];
+      if (otherTask) totalReward += otherTask.reward + bonus;
+      this.emit('itemEffect', { player: currentPlayer, itemId: 'freeCard', detail: '白嫖卡！两个任务都给' });
+    }
+
+    if (this.hasItem(currentPlayer, 'doubleScore')) {
+      this.useItem(currentPlayer, 'doubleScore');
+      totalReward *= 2;
+      this.emit('itemEffect', { player: currentPlayer, itemId: 'doubleScore', detail: '双倍积分！' });
+    }
+
+    let rewardPlayer = currentPlayer;
+    if (this.hasItem(enemy, 'switchCard')) {
+      this.useItem(enemy, 'switchCard');
+      rewardPlayer = enemy;
+      this.emit('itemEffect', { player: enemy, itemId: 'switchCard', detail: '调包卡！积分归我' });
+    }
+
+    this.state.players[rewardPlayer].score += totalReward;
+    this.emit('scoreChange', { player: rewardPlayer, delta: totalReward, score: this.state.players[rewardPlayer].score });
+    this.emit('stateChange', this.state);
+    this.emit('hideTask');
+    this.finishCellResolve();
+  }
+
+  closeEvent() {
+    this.emit('hideEvent');
+    this.finishCellResolve();
+  }
+
+  finishCellResolve() {
+    if (this.pendingCellResolve) {
+      const { player, pieceIndex, pos, afterResolve } = this.pendingCellResolve;
+      this.pendingCellResolve = null;
+      afterResolve();
+    }
+  }
+
+  doTeleport(player, pieceIndex, pos) {
+    const { row, col } = this.posToRowCol(pos);
+    const enemy = 1 - player;
+    let dir = 1;
+    if (this.hasItem(enemy, 'teleportTrap')) {
+      this.useItem(enemy, 'teleportTrap');
+      dir = -1;
+      this.emit('itemEffect', { player: enemy, itemId: 'teleportTrap', detail: '传送陷阱！改为向下传送' });
+    }
+    const newRow = row + dir;
+    if (newRow > 4 || newRow < 0) { this.resolveCollisionThenCell(player, pieceIndex, pos); return; }
+
+    const newPos = this.rowColToPos(newRow, col);
+    const p = this.state.players[player];
+    p.pieces[pieceIndex] = newPos;
+    this.emit('teleport', { player, pieceIndex, fromPos: pos, toPos: newPos });
+    this.emit('stateChange', this.state);
+
+    setTimeout(() => {
+      if (newPos >= 39) {
+        this.onMoveComplete(player, pieceIndex, newPos, newPos);
+      } else if (CELL_TYPES[newPos] === 'teleport' && dir === 1) {
+        this.checkCollision(player, pieceIndex, newPos, (skip) => {
+          if (!skip) { this.doTeleport(player, pieceIndex, newPos); }
+        });
+      } else {
+        this.resolveCollisionThenCell(player, pieceIndex, newPos);
+      }
+    }, 600);
+  }
+
+  checkCollision(moverPlayer, moverPiece, pos, callback) {
+    if (pos === 0 || pos >= 39) { callback(false); return; }
+
+    const otherPlayer = 1 - moverPlayer;
+    const otherP = this.state.players[otherPlayer];
+    const moverP = this.state.players[moverPlayer];
+
+    const enemyPiecesHere = [];
+    for (let i = 0; i < 2; i++) {
+      if (!otherP.finished[i] && otherP.pieces[i] === pos) {
+        enemyPiecesHere.push(i);
+      }
+    }
+
+    if (enemyPiecesHere.length > 0) {
+      if (this.hasItem(moverPlayer, 'immovable')) { callback(false); return; }
+      const victim = otherPlayer;
+      const attacker = moverPlayer;
+
+      if (this.hasItem(victim, 'immovable')) {
+        this.useItem(victim, 'immovable');
+        this.emit('itemEffect', { player: victim, itemId: 'immovable', detail: '不动甲！反踢对方' });
+        const { row, col } = this.posToRowCol(pos);
+        const newRow = row - 1;
+        const newPos = newRow < 0 ? 0 : this.rowColToPos(newRow, col);
+        this.kickPiecesDown([{ player: attacker, index: moverPiece }], newPos, () => {
+          callback(false);
+        });
+        return;
+      }
+
+      if (this.hasItem(victim, 'thornArmor')) {
+        this.useItem(victim, 'thornArmor');
+        this.emit('itemEffect', { player: victim, itemId: 'thornArmor', detail: '荆棘甲！对方失一件装备' });
+        this.loseRandomEquip(attacker);
+      }
+
+      const { row, col } = this.posToRowCol(pos);
+      const newRow = row - 1;
+      const newPos = newRow < 0 ? 0 : this.rowColToPos(newRow, col);
+
+      const pieces = enemyPiecesHere.map(i => ({ player: otherPlayer, index: i }));
+      this.kickPiecesDown(pieces, newPos, () => {
+        callback(false);
+      });
+      return;
+    }
+
+    let friendlyHere = false;
+    for (let i = 0; i < 2; i++) {
+      if (i !== moverPiece && !moverP.finished[i] && moverP.pieces[i] === pos) {
+        friendlyHere = true;
+        break;
+      }
+    }
+
+    if (friendlyHere) {
+      if (this.hasItem(moverPlayer, 'springArmor')) {
+        this.useItem(moverPlayer, 'springArmor');
+        this.emit('itemEffect', { player: moverPlayer, itemId: 'springArmor', detail: '弹簧甲！叠棋变上一层' });
+        const { row } = this.posToRowCol(pos);
+        if (row >= 4) { callback(false); return; }
+        const newPos = this.sameColAbove(pos);
+        moverP.pieces[moverPiece] = newPos;
+        this.emit('pieceMoved', { player: moverPlayer, pieceIndex: moverPiece, fromPos: pos, toPos: newPos });
+        this.emit('stateChange', this.state);
+        setTimeout(() => {
+          this.checkCollision(moverPlayer, moverPiece, newPos, (skip) => {
+            if (skip) return;
+            this.resolveCellEffect(moverPlayer, moverPiece, newPos);
+          });
+        }, 300);
+        callback(true);
+        return;
+      }
+
+      this.emit('stackBonus', { player: moverPlayer, pieceIndex: moverPiece, pos });
+      this.state.phase = 'idle';
+      this.state.diceValue = 0;
+      this.state.rerollCount = 0;
+      this.emit('stateChange', this.state);
+      callback(true);
+      return;
+    }
+
+    callback(false);
+  }
+
+  kickPiecesDown(pieces, targetPos, done) {
+    if (targetPos === 0) {
+      pieces.forEach(p => {
+        const tp = this.state.players[p.player];
+        if (!tp.finished[p.index]) tp.pieces[p.index] = targetPos;
+      });
+      this.emit('kicked', { pieces, toPos: targetPos });
+      this.emit('stateChange', this.state);
+      setTimeout(done, 400);
+      return;
+    }
+
+    const existing = [];
+    for (let pl = 0; pl < 2; pl++) {
+      for (let i = 0; i < 2; i++) {
+        const tp = this.state.players[pl];
+        if (tp.finished[i]) continue;
+        if (tp.pieces[i] !== targetPos) continue;
+        if (!pieces.some(p => p.player === pl && p.index === i)) {
+          existing.push({ player: pl, index: i });
+        }
+      }
+    }
+
+    pieces.forEach(p => {
+      const tp = this.state.players[p.player];
+      if (!tp.finished[p.index]) tp.pieces[p.index] = targetPos;
+    });
+    this.emit('kicked', { pieces, toPos: targetPos });
+    this.emit('stateChange', this.state);
+
+    if (existing.length === 0) {
+      setTimeout(done, 400);
+      return;
+    }
+
+    const { row, col } = this.posToRowCol(targetPos);
+    const newRow = row - 1;
+    const newPos = newRow < 0 ? 0 : this.rowColToPos(newRow, col);
+
+    setTimeout(() => {
+      this.kickPiecesDown(existing, newPos, done);
+    }, 400);
+  }
+
+  endTurn() {
+    if (this.state.extraTurn && this.state.extraTurn.player === this.state.currentPlayer && this.state.extraTurn.count > 0) {
+      this.state.extraTurn.count -= 1;
+      const remaining = this.state.extraTurn.count;
+      if (remaining <= 0) this.state.extraTurn = null;
+      this.state.rerollCount = 0;
+      this.state.phase = 'idle';
+      this.state.diceValue = 0;
+      this.emit('extraTurn', { player: this.state.currentPlayer, remaining });
+      this.emit('turnChange', this.state.currentPlayer);
+      this.emit('stateChange', this.state);
+      return;
+    }
+
+    let next = 1 - this.state.currentPlayer;
+    const nextP = this.state.players[next];
+
+    if (nextP.allDone) {
+      this.state.rerollCount = 0;
+      this.state.phase = 'idle';
+      this.state.diceValue = 0;
+
+      const curP = this.state.players[this.state.currentPlayer];
+      if (!curP.allDone && this.state.endgame) {
+        const penalty = Math.min(10, curP.score);
+        curP.score -= penalty;
+        this.emit('scoreChange', { player: this.state.currentPlayer, delta: -penalty, score: curP.score });
+        this.emit('endgamePenalty', { player: this.state.currentPlayer, penalty });
+      }
+
+      this.emit('turnChange', this.state.currentPlayer);
+      this.emit('stateChange', this.state);
+      return;
+    }
+
+    this.state.currentPlayer = next;
+    this.state.rerollCount = 0;
+    this.state.phase = 'idle';
+    this.state.diceValue = 0;
+
+    const curP = this.state.players[next];
+    if (!curP.allDone && this.state.endgame) {
+      const penalty = Math.min(10, curP.score);
+      curP.score -= penalty;
+      this.emit('scoreChange', { player: next, delta: -penalty, score: curP.score });
+      this.emit('endgamePenalty', { player: next, penalty });
+    }
+
+    this.emit('turnChange', this.state.currentPlayer);
+    this.emit('stateChange', this.state);
+  }
+
+  raisePiecesUp(pieces, done) {
+    pieces.forEach(p => {
+      const newPos = this.sameColAbove(this.state.players[p.player].pieces[p.index]);
+      if (newPos !== null) {
+        this.state.players[p.player].pieces[p.index] = newPos;
+      }
+    });
+    this.emit('piecesRaised', { pieces });
+    this.emit('stateChange', this.state);
+    this.collideForPieces(pieces, 0, done);
+  }
+
+  collideForPieces(pieces, idx, done) {
+    if (idx >= pieces.length) { done(); return; }
+    const p = pieces[idx];
+    const pos = this.state.players[p.player].pieces[p.index];
+    if (pos === 0 || pos >= 39) { this.collideForPieces(pieces, idx+1, done); return; }
+    this.checkCollision(p.player, p.index, pos, () => {
+      this.collideForPieces(pieces, idx + 1, done);
+    });
+  }
+
+  processMultiDrop(pieces, idx, done) {
+    if (idx >= pieces.length) { done(); return; }
+    const { player, index } = pieces[idx];
+    const fromPos = this.state.players[player].pieces[index];
+    const targetPos = this.sameColBelow(fromPos);
+    this.kickPiecesDown([{ player, index }], targetPos, () => {
+      this.processMultiDrop(pieces, idx + 1, done);
+    });
+  }
+
+  processEventMovers(movers, steps, triggerClothes, done) {
+    const doNext = (i) => {
+      if (i >= movers.length) { done(); return; }
+      const m = movers[i];
+      const fromPos = this.state.players[m.player].pieces[m.index];
+      const toPos = Math.min(39, fromPos + steps);
+      if (toPos === fromPos || this.state.players[m.player].finished[m.index]) {
+        doNext(i + 1); return;
+      }
+      const fromRow = this.getRow(fromPos);
+      const toRow = this.getRow(toPos);
+      const p = this.state.players[m.player];
+      const onClothes = this.equipCount(m.player);
+
+      const afterMove = () => {
+        this.state.players[m.player].pieces[m.index] = toPos;
+        this.emit('pieceMoved', { player: m.player, pieceIndex: m.index, fromPos, toPos });
+        this.emit('stateChange', this.state);
+        if (toPos >= 39) {
+          this.state.players[m.player].finished[m.index] = true;
+          this.emit('pieceFinished', { player: m.player, pieceIndex: m.index });
+          doNext(i + 1);
+          return;
+        }
+        this.checkCollision(m.player, m.index, toPos, () => {
+          doNext(i + 1);
+        });
+      };
+
+      if (triggerClothes && toRow > fromRow && onClothes > 0) {
+        if (this.hasItem(m.player, 'freeClothes')) {
+          this.useItem(m.player, 'freeClothes');
+          p.skipClothesStreak = 0;
+          this.emit('itemEffect', { player: m.player, itemId: 'freeClothes', detail: '免脱卡生效' });
+          afterMove();
+        } else {
+          this.state.phase = 'clothesChoice';
+          this.pendingCellResolve = {
+            player: m.player, pieceIndex: m.index, pos: toPos,
+            afterResolve: () => {
+              this.state.players[m.player].pieces[m.index] = toPos;
+              if (toPos >= 39) {
+                this.state.players[m.player].finished[m.index] = true;
+                this.emit('pieceFinished', { player: m.player, pieceIndex: m.index });
+                doNext(i + 1);
+                return;
+              }
+              this.checkCollision(m.player, m.index, toPos, () => {
+                doNext(i + 1);
+              });
+            }
+          };
+          this.state.players[m.player].pieces[m.index] = fromPos;
+          this.emit('showClothesChoice', {
+            player: m.player, pieceIndex: m.index, pos: toPos,
+            price: this.getSkipClothesPrice(m.player),
+            canAfford: p.score >= this.getSkipClothesPrice(m.player)
+          });
+          this.emit('stateChange', this.state);
+          return;
+        }
+      } else {
+        afterMove();
+      }
+    };
+    doNext(0);
+    this.emit('stateChange', this.state);
+  }
+
+  // ===== 事件效果 =====
   triggerEventEffect(event, ctx) {
     const { player, pieceIndex, pos } = ctx;
     const effectName = EVENT_EFFECTS[event.id];
     const effect = this[effectName];
-    if (!effect) {
-      ctx.onDone && ctx.onDone();
-      return;
-    }
+    if (!effect) { ctx.onDone && ctx.onDone(); return; }
     const enemy = 1 - player;
     if (this.hasItem(enemy, 'financeTrap') && CELL_TYPES[pos] === 'event') {
       this.useItem(enemy, 'financeTrap');
@@ -953,7 +982,6 @@ class GameEngine {
     effect.call(this, player, pieceIndex, pos, ctx);
   }
 
-  // ===== 事件效果（同前端实现） =====
   eventEffect_redPacket(player, pieceIndex, pos, ctx) {
     for (let pl = 0; pl < 2; pl++) {
       this.state.players[pl].score += 8;
@@ -981,8 +1009,7 @@ class GameEngine {
     const s1 = this.state.players[1].score;
     if (s0 === s1) {
       this.emit('eventEffect', { event: 'robHood', detail: '平分，无事发生' });
-      ctx.onDone();
-      return;
+      ctx.onDone(); return;
     }
     const rich = s0 > s1 ? 0 : 1;
     const poor = 1 - rich;
@@ -1102,38 +1129,6 @@ class GameEngine {
     });
   }
 
-  processMultiDrop(pieces, idx, done) {
-    if (idx >= pieces.length) { done(); return; }
-    const { player, index } = pieces[idx];
-    const fromPos = this.state.players[player].pieces[index];
-    const targetPos = this.sameColBelow(fromPos);
-    this.kickPiecesDown([{ player, index }], targetPos, () => {
-      this.processMultiDrop(pieces, idx + 1, done);
-    });
-  }
-
-  raisePiecesUp(pieces, done) {
-    pieces.forEach(p => {
-      const newPos = this.sameColAbove(this.state.players[p.player].pieces[p.index]);
-      if (newPos !== null) {
-        this.state.players[p.player].pieces[p.index] = newPos;
-      }
-    });
-    this.emit('piecesRaised', { pieces });
-    this.emit('stateChange', this.state);
-    this.collideForPieces(pieces, 0, done);
-  }
-
-  collideForPieces(pieces, idx, done) {
-    if (idx >= pieces.length) { done(); return; }
-    const p = pieces[idx];
-    const pos = this.state.players[p.player].pieces[p.index];
-    if (pos === 0 || pos >= 39) { this.collideForPieces(pieces, idx+1, done); return; }
-    this.checkCollision(p.player, p.index, pos, () => {
-      this.collideForPieces(pieces, idx + 1, done);
-    });
-  }
-
   eventEffect_bigWind(player, pieceIndex, pos, ctx) {
     const toTeleport = [];
     for (let pl = 0; pl < 2; pl++) {
@@ -1220,75 +1215,6 @@ class GameEngine {
     });
   }
 
-  processEventMovers(movers, steps, triggerClothes, done) {
-    const doNext = (i) => {
-      if (i >= movers.length) { done(); return; }
-      const m = movers[i];
-      const fromPos = this.state.players[m.player].pieces[m.index];
-      const toPos = Math.min(39, fromPos + steps);
-      if (toPos === fromPos || this.state.players[m.player].finished[m.index]) {
-        doNext(i + 1); return;
-      }
-      const fromRow = this.getRow(fromPos);
-      const toRow = this.getRow(toPos);
-      const p = this.state.players[m.player];
-      const onClothes = this.equipCount(m.player);
-
-      const afterMove = () => {
-        this.state.players[m.player].pieces[m.index] = toPos;
-        this.emit('pieceMoved', { player: m.player, pieceIndex: m.index, fromPos, toPos });
-        this.emit('stateChange', this.state);
-        if (toPos >= 39) {
-          this.state.players[m.player].finished[m.index] = true;
-          this.emit('pieceFinished', { player: m.player, pieceIndex: m.index });
-          doNext(i + 1);
-          return;
-        }
-        this.checkCollision(m.player, m.index, toPos, () => {
-          doNext(i + 1);
-        });
-      };
-
-      if (triggerClothes && toRow > fromRow && onClothes > 0) {
-        if (this.hasItem(m.player, 'freeClothes')) {
-          this.useItem(m.player, 'freeClothes');
-          p.skipClothesStreak = 0;
-          this.emit('itemEffect', { player: m.player, itemId: 'freeClothes', detail: '免脱卡生效' });
-          afterMove();
-        } else {
-          this.state.phase = 'clothesChoice';
-          this.pendingCellResolve = {
-            player: m.player, pieceIndex: m.index, pos: toPos,
-            afterResolve: () => {
-              this.state.players[m.player].pieces[m.index] = toPos;
-              if (toPos >= 39) {
-                this.state.players[m.player].finished[m.index] = true;
-                this.emit('pieceFinished', { player: m.player, pieceIndex: m.index });
-                doNext(i + 1);
-                return;
-              }
-              this.checkCollision(m.player, m.index, toPos, () => {
-                doNext(i + 1);
-              });
-            }
-          };
-          this.state.players[m.player].pieces[m.index] = fromPos;
-          this.emit('showClothesChoice', {
-            player: m.player, pieceIndex: m.index, pos: toPos,
-            price: this.getSkipClothesPrice(m.player),
-            canAfford: p.score >= this.getSkipClothesPrice(m.player)
-          });
-          this.emit('stateChange', this.state);
-          return;
-        }
-      } else {
-        afterMove();
-      }
-    };
-    doNext(0);
-    this.emit('stateChange', this.state);
-  }
-
   eventEffect_lookBehind(player, pieceIndex, pos, ctx) {
     let minDist = 999;
     let targetIdx = -1;
@@ -1305,94 +1231,41 @@ class GameEngine {
       }
     }
     if (targetIdx < 0) { ctx.onDone(); return; }
-    const targetPos = this.state.players[targetPlayer].pieces[targetIdx];
-    const newPos = Math.max(0, targetPos - 1);
-    this.state.players[player].pieces[pieceIndex] = newPos;
-    this.emit('pieceMoved', { player, pieceIndex, fromPos: pos, toPos: newPos });
+    const targetPos = Math.max(0, this.state.players[targetPlayer].pieces[targetIdx] - 1);
+    this.state.players[player].pieces[pieceIndex] = targetPos;
+    this.emit('pieceMoved', { player, pieceIndex, fromPos: pos, toPos: targetPos });
     this.emit('stateChange', this.state);
-    this.emit('eventEffect', { event: 'lookBehind', detail: `传送到玩家${targetPlayer+1}棋子身后` });
-    this.checkCollision(player, pieceIndex, newPos, () => ctx.onDone());
+    this.checkCollision(player, pieceIndex, targetPos, () => {
+      this.emit('eventEffect', { event: 'lookBehind', detail: '传送到最近棋子身后' });
+      ctx.onDone();
+    });
   }
 
   eventEffect_forward(player, pieceIndex, pos, ctx) {
-    const fromPos = pos;
-    const toPos = Math.min(39, fromPos + 3);
-    if (toPos === fromPos) { ctx.onDone(); return; }
-    const fromRow = this.getRow(fromPos);
-    const toRow = this.getRow(toPos);
-    const p = this.state.players[player];
-    const onClothes = p.equipment.filter(e => e.on).length;
-
-    const afterMove = () => {
-      this.state.players[player].pieces[pieceIndex] = toPos;
-      this.emit('pieceMoved', { player, pieceIndex, fromPos, toPos });
-      this.emit('stateChange', this.state);
-      if (toPos >= 39) {
-        p.finished[pieceIndex] = true;
-        this.emit('pieceFinished', { player, pieceIndex });
-        this.emit('eventEffect', { event: 'forward', detail: '勇往直前！冲到终点' });
-        ctx.onDone();
-        return;
-      }
-      this.checkCollision(player, pieceIndex, toPos, () => {
-        this.emit('eventEffect', { event: 'forward', detail: '勇往直前！前进3格' });
-        ctx.onDone();
-      });
-    };
-
-    if (toRow > fromRow && onClothes > 0) {
-      if (this.hasItem(player, 'freeClothes')) {
-        this.useItem(player, 'freeClothes');
-        p.skipClothesStreak = 0;
-        this.emit('itemEffect', { player, itemId: 'freeClothes', detail: '免脱卡生效' });
-        afterMove();
-      } else {
-        this.state.phase = 'clothesChoice';
-        this.pendingCellResolve = { player, pieceIndex, pos: toPos, afterResolve: () => {
-          this.state.players[player].pieces[pieceIndex] = toPos;
-          if (toPos >= 39) {
-            p.finished[pieceIndex] = true;
-            this.emit('pieceFinished', { player, pieceIndex });
-            ctx.onDone(); return;
-          }
-          this.checkCollision(player, pieceIndex, toPos, () => {
-            this.emit('eventEffect', { event: 'forward', detail: '勇往直前！前进3格' });
-            ctx.onDone();
-          });
-        }};
-        this.state.players[player].pieces[pieceIndex] = fromPos;
-        this.emit('showClothesChoice', {
-          player, pieceIndex, pos: toPos,
-          price: this.getSkipClothesPrice(player),
-          canAfford: p.score >= this.getSkipClothesPrice(player)
-        });
-        this.emit('stateChange', this.state);
-        return;
-      }
-    } else {
-      afterMove();
-    }
+    const movers = [{ player, index: pieceIndex, fromPos: pos }];
+    this.processEventMovers(movers, 3, true, () => {
+      this.emit('eventEffect', { event: 'forward', detail: '勇往直前！前进3格' });
+      ctx.onDone();
+    });
   }
 
   eventEffect_shopFrenzy(player, pieceIndex, pos, ctx) {
     const row = this.getRow(pos);
-    let shopPos = -1;
+    const shopPos = [];
     for (let c = 0; c < 8; c++) {
       const cp = row * 8 + c;
-      if (CELL_TYPES[cp] === 'shop') { shopPos = cp; break; }
+      if (CELL_TYPES[cp] === 'shop') shopPos.push(cp);
     }
-    if (shopPos < 0 || shopPos === pos) {
-      this.emit('eventEffect', { event: 'shopFrenzy', detail: '本层无商店格' });
-      ctx.onDone(); return;
-    }
-    this.state.players[player].pieces[pieceIndex] = shopPos;
-    this.emit('pieceMoved', { player, pieceIndex, fromPos: pos, toPos: shopPos });
+    if (shopPos.length === 0) { ctx.onDone(); return; }
+    const target = shopPos[Math.floor(Math.random() * shopPos.length)];
+    this.state.players[player].pieces[pieceIndex] = target;
+    this.emit('pieceMoved', { player, pieceIndex, fromPos: pos, toPos: target });
     this.emit('stateChange', this.state);
     this.emit('eventEffect', { event: 'shopFrenzy', detail: '购物狂热！传送至商店' });
-    this.checkCollision(player, pieceIndex, shopPos, (skip) => {
+    this.checkCollision(player, pieceIndex, target, (skip) => {
       if (skip) { ctx.onDone(); return; }
       this.openShop(player);
-      this.pendingCellResolve = { player, pieceIndex, pos: shopPos, afterResolve: () => ctx.onDone() };
+      this.pendingCellResolve = { player, pieceIndex, pos: target, afterResolve: () => ctx.onDone() };
     });
   }
 
@@ -1543,7 +1416,7 @@ class GameEngine {
       const offList = p.equipment.filter(e => !e.on);
       if (onList.length > 0 && offList.length > 0) {
         const lose = onList[Math.floor(Math.random() * onList.length)];
-        const gain = offList[Math.floor(Math.random() * offList.length)];
+        let gain = offList[Math.floor(Math.random() * offList.length)];
         lose.on = false;
         gain.on = true;
         this.emit('equipmentChange', { player: pl, action: 'swap', from: lose.id, to: gain.id });
@@ -1666,9 +1539,8 @@ class GameEngine {
       this.emit('eventEffect', { event: 'financeTrap', detail: `金融陷阱！失去18积分` });
     } else {
       const lost = this.loseRandomEquip(victimPlayer, { fromEvent: true });
-      const scoreBefore = p.score;
       p.score = 0;
-      this.emit('scoreChange', { player: victimPlayer, delta: -scoreBefore, score: 0 });
+      this.emit('scoreChange', { player: victimPlayer, delta: -p.score, score: 0 });
       this.emit('eventEffect', { event: 'financeTrap', detail: `金融陷阱！积分清零${lost ? '并失去一件装备' : ''}` });
     }
     ctx.onDone();
@@ -1679,11 +1551,11 @@ class GameEngine {
     const enemy = 1 - player;
 
     const hasRestock = this.hasItem(player, 'restockCard');
-    const equipCountVal = hasRestock ? 2 : 1;
+    const equipCount = hasRestock ? 2 : 1;
     const normalCount = hasRestock ? 6 : 4;
 
     const equipShuffled = this.shuffleArray([...EQUIPMENT_ITEMS]);
-    const equipItems = equipShuffled.slice(0, equipCountVal).map(eq => {
+    const equipItems = equipShuffled.slice(0, equipCount).map(eq => {
       const playerEq = p.equipment.find(e => e.id === eq.id);
       const owned = playerEq ? playerEq.on : false;
       let price = 10 + Math.floor(Math.random() * 6);
@@ -1738,26 +1610,21 @@ class GameEngine {
     this.emit('showShop', { player, items: this.shopItems, score: p.score });
   }
 
-  buyItem(playerIdx, itemId) {
-    if (playerIdx !== this.state.currentPlayer) return false;
+  buyItem(itemId) {
     const item = this.shopItems.find(i => i.id === itemId);
-    if (!item || item.purchased) return false;
+    if (!item || item.purchased) return;
     const p = this.state.players[this.state.currentPlayer];
-    if (p.score < item.price) return false;
+    if (p.score < item.price) return;
 
-    if (item.type === 'equipment' && item.owned) return false;
-    if (item.type === 'normal' && p.inventory[item.itemId]) return false;
+    if (item.type === 'equipment' && item.owned) return;
+    if (item.type === 'normal' && p.inventory[item.itemId]) return;
 
     p.score -= item.price;
     item.purchased = true;
 
     if (item.type === 'equipment') {
       const eq = p.equipment.find(e => e.id === item.equipId);
-      if (eq) {
-        eq.on = true;
-        item.owned = true;
-        this.emit('equipmentChange', { player: this.state.currentPlayer, equipment: p.equipment });
-      }
+      if (eq) { eq.on = true; item.owned = true; }
     } else if (item.type === 'normal') {
       this.addItem(this.state.currentPlayer, item.itemId);
     }
@@ -1765,14 +1632,11 @@ class GameEngine {
     this.emit('scoreChange', { player: this.state.currentPlayer, delta: -item.price, score: p.score });
     this.emit('itemPurchased', { item });
     this.emit('stateChange', this.state);
-    return true;
   }
 
-  closeShop(playerIdx) {
-    if (playerIdx !== this.state.currentPlayer) return false;
+  closeShop() {
     this.emit('hideShop');
     this.finishCellResolve();
-    return true;
   }
 }
 
@@ -1780,41 +1644,22 @@ class GameEngine {
 //  房间管理
 // ============================================================
 class Room {
-  constructor(roomId, hostWs) {
-    this.id = roomId;
-    this.players = [hostWs, null]; // 0 = 房主，1 = 加入者
-    this.hostId = hostWs.playerId;
-    this.engine = new GameEngine();
+  constructor(roomId) {
+    this.roomId = roomId;
+    this.players = [null, null];
+    this.engine = null;
     this.started = false;
-    this.createdAt = Date.now();
-
-    // 将引擎事件广播给房间内所有玩家
-    this._bindEngineEvents();
-  }
-
-  _bindEngineEvents() {
-    const eventsToBroadcast = [
-      'stateChange', 'diceRoll', 'selectPiece', 'showRerollChoice',
-      'pieceMove', 'pieceMoved', 'pieceFinished', 'stackBonus',
-      'kicked', 'teleport', 'piecesRaised', 'piecesRetreated',
-      'showTask', 'hideTask', 'showEvent', 'hideEvent', 'eventEffect',
-      'showShop', 'hideShop', 'itemPurchased',
-      'showClothesChoice', 'hideClothesChoice',
-      'scoreChange', 'equipmentChange', 'inventoryChange', 'itemEffect',
-      'turnChange', 'extraTurn', 'endgamePenalty', 'victory'
-    ];
-
-    eventsToBroadcast.forEach(evt => {
-      this.engine.on(evt, (data) => {
-        this.broadcast({ type: 'gameEvent', event: evt, data });
-      });
-    });
   }
 
   addPlayer(ws) {
-    if (this.players[1]) return false;
-    this.players[1] = ws;
-    return true;
+    if (this.players[0] === null) {
+      this.players[0] = ws;
+      return 0;
+    } else if (this.players[1] === null) {
+      this.players[1] = ws;
+      return 1;
+    }
+    return -1;
   }
 
   removePlayer(ws) {
@@ -1827,65 +1672,240 @@ class Room {
     return -1;
   }
 
-  getPlayerIndex(ws) {
-    return this.players.indexOf(ws);
+  get playerCount() {
+    return this.players.filter(p => p !== null).length;
   }
 
   isFull() {
-    return this.players[0] && this.players[1];
+    return this.players[0] !== null && this.players[1] !== null;
   }
 
-  isEmpty() {
-    return !this.players[0] && !this.players[1];
-  }
-
-  broadcast(msg) {
-    const data = JSON.stringify(msg);
+  sendToAll(type, data) {
+    const msg = JSON.stringify({ type, data });
     this.players.forEach(p => {
-      if (p && p.readyState === 1) {
-        try { p.send(data); } catch (e) {}
-      }
+      if (p && p.readyState === 1) p.send(msg);
     });
   }
 
-  sendTo(playerIdx, msg) {
-    const p = this.players[playerIdx];
+  sendToPlayer(playerIndex, type, data) {
+    const p = this.players[playerIndex];
     if (p && p.readyState === 1) {
-      try { p.send(JSON.stringify(msg)); } catch (e) {}
+      p.send(JSON.stringify({ type, data }));
     }
   }
 
-  startGame(taskList) {
-    if (this.started) return false;
-    if (!this.isFull()) return false;
+  broadcastGameEvent(event, data) {
+    this.sendToAll('gameEvent', { event, ...data });
+  }
+
+  startGame() {
+    if (this.started) return;
     this.started = true;
-    this.engine.initGame(taskList);
-    // 告诉每个玩家自己的编号
-    this.sendTo(0, { type: 'playerAssigned', playerIndex: 0, isHost: true });
-    this.sendTo(1, { type: 'playerAssigned', playerIndex: 1, isHost: false });
-    // 广播游戏开始
-    this.broadcast({ type: 'gameStart' });
-    return true;
+    this.engine = new GameEngine();
+
+    const eventsToForward = [
+      'stateChange', 'diceRoll', 'selectPiece', 'pieceMove',
+      'pieceFinished', 'showTask', 'hideTask', 'showEvent', 'hideEvent',
+      'showShop', 'hideShop', 'scoreChange', 'itemPurchased',
+      'teleport', 'kicked', 'stackBonus', 'showClothesChoice',
+      'hideClothesChoice', 'equipmentChange', 'inventoryChange',
+      'itemEffect', 'eventEffect', 'extraTurn', 'showRerollChoice',
+      'endgamePenalty', 'turnChange', 'victory', 'piecesRaised',
+      'piecesRetreated', 'pieceMoved'
+    ];
+
+    eventsToForward.forEach(evt => {
+      this.engine.on(evt, (data) => {
+        this.broadcastGameEvent(evt, data);
+      });
+    });
+
+    this.sendToAll('gameStart', {});
   }
 }
 
-const rooms = new Map(); // roomId -> Room
+const rooms = new Map();
 
 function generateRoomId() {
   let id;
   do {
-    id = String(Math.floor(100000 + Math.random() * 900000));
+    id = Math.floor(100000 + Math.random() * 900000).toString();
   } while (rooms.has(id));
   return id;
 }
 
 // ============================================================
-//  静态文件服务
+//  WebSocket 处理
+// ============================================================
+function setupWebSocket(server) {
+  const wss = new WebSocketServer({ server });
+
+  wss.on('connection', (ws) => {
+    ws.roomId = null;
+    ws.playerIndex = -1;
+
+    ws.on('message', (raw) => {
+      try {
+        const msg = JSON.parse(raw.toString());
+        handleMessage(ws, msg);
+      } catch (e) {
+        console.error('Invalid message:', e);
+      }
+    });
+
+    ws.on('close', () => {
+      if (ws.roomId && rooms.has(ws.roomId)) {
+        const room = rooms.get(ws.roomId);
+        const idx = room.removePlayer(ws);
+        if (room.started) {
+          room.sendToAll('opponentDisconnected', {});
+        } else {
+          if (idx === 0 && room.players[1]) {
+            room.players[1].send(JSON.stringify({ type: 'roomLeft' }));
+          } else if (idx === 1) {
+            room.sendToPlayer(0, 'playerLeft', {});
+          }
+        }
+        if (room.playerCount === 0) {
+          rooms.delete(ws.roomId);
+        }
+      }
+    });
+  });
+
+  function handleMessage(ws, msg) {
+    const { type, data } = msg;
+
+    switch (type) {
+      case 'createRoom':
+        handleCreateRoom(ws);
+        break;
+      case 'joinRoom':
+        handleJoinRoom(ws, data?.roomId);
+        break;
+      case 'leaveRoom':
+        handleLeaveRoom(ws);
+        break;
+      case 'startGame':
+        handleStartGame(ws);
+        break;
+      case 'gameAction':
+        handleGameAction(ws, data);
+        break;
+    }
+  }
+
+  function handleCreateRoom(ws) {
+    const roomId = generateRoomId();
+    const room = new Room(roomId);
+    const idx = room.addPlayer(ws);
+    ws.roomId = roomId;
+    ws.playerIndex = idx;
+    rooms.set(roomId, room);
+    ws.send(JSON.stringify({
+      type: 'roomCreated',
+      data: { roomId, playerIndex: idx, isHost: idx === 0 }
+    }));
+  }
+
+  function handleJoinRoom(ws, roomId) {
+    if (!roomId || !rooms.has(roomId)) {
+      ws.send(JSON.stringify({ type: 'error', message: '房间不存在' }));
+      return;
+    }
+    const room = rooms.get(roomId);
+    if (room.isFull()) {
+      ws.send(JSON.stringify({ type: 'error', message: '房间已满' }));
+      return;
+    }
+    const idx = room.addPlayer(ws);
+    ws.roomId = roomId;
+    ws.playerIndex = idx;
+    ws.send(JSON.stringify({
+      type: 'roomJoined',
+      data: { roomId, playerIndex: idx, isHost: idx === 0 }
+    }));
+    room.sendToPlayer(0, 'playerJoined', { playerIndex: idx });
+  }
+
+  function handleLeaveRoom(ws) {
+    if (!ws.roomId || !rooms.has(ws.roomId)) return;
+    const room = rooms.get(ws.roomId);
+    room.removePlayer(ws);
+    ws.roomId = null;
+    ws.playerIndex = -1;
+    ws.send(JSON.stringify({ type: 'roomLeft' }));
+    if (room.playerCount === 0) {
+      rooms.delete(room.roomId);
+    }
+  }
+
+  function handleStartGame(ws) {
+    if (!ws.roomId || !rooms.has(ws.roomId)) return;
+    const room = rooms.get(ws.roomId);
+    if (ws.playerIndex !== 0) return;
+    if (!room.isFull()) return;
+    room.startGame();
+  }
+
+  function handleGameAction(ws, data) {
+    if (!ws.roomId || !rooms.has(ws.roomId)) return;
+    const room = rooms.get(ws.roomId);
+    if (!room.engine || !room.started) return;
+
+    const { action, payload } = data || {};
+    const engine = room.engine;
+    const state = engine.state;
+
+    const selfActions = [
+      'rollDice', 'rerollDice', 'movePiece', 'selectTask',
+      'closeEvent', 'takeOffEquipment', 'buySkipClothes',
+      'buyItem', 'closeShop'
+    ];
+
+    if (selfActions.includes(action) && state.currentPlayer !== ws.playerIndex) {
+      ws.send(JSON.stringify({ type: 'actionRejected', data: { reason: 'not your turn', action } }));
+      return;
+    }
+
+    switch (action) {
+      case 'rollDice':
+        engine.rollDice();
+        break;
+      case 'rerollDice':
+        engine.rerollDice();
+        break;
+      case 'movePiece':
+        engine.movePiece(payload?.pieceIndex);
+        break;
+      case 'selectTask':
+        engine.selectTask(payload?.taskIndex);
+        break;
+      case 'closeEvent':
+        engine.closeEvent();
+        break;
+      case 'takeOffEquipment':
+        engine.takeOffEquipment(ws.playerIndex, payload?.pieceIndex, payload?.pos, payload?.equipIndex);
+        break;
+      case 'buySkipClothes':
+        engine.buySkipClothes(ws.playerIndex, payload?.pieceIndex, payload?.pos);
+        break;
+      case 'buyItem':
+        engine.buyItem(payload?.itemId);
+        break;
+      case 'closeShop':
+        engine.closeShop();
+        break;
+    }
+  }
+}
+
+// ============================================================
+//  HTTP 静态文件服务
 // ============================================================
 const MIME_TYPES = {
   '.html': 'text/html; charset=utf-8',
   '.js':   'application/javascript; charset=utf-8',
-  '.mjs':  'application/javascript; charset=utf-8',
   '.css':  'text/css; charset=utf-8',
   '.json': 'application/json; charset=utf-8',
   '.svg':  'image/svg+xml',
@@ -1894,15 +1914,10 @@ const MIME_TYPES = {
   '.jpeg': 'image/jpeg',
   '.gif':  'image/gif',
   '.ico':  'image/x-icon',
-  '.webp': 'image/webp',
-  '.woff': 'font/woff',
-  '.woff2': 'font/woff2',
-  '.ttf':  'font/ttf',
   '.map':  'application/json; charset=utf-8'
 };
 
 function resolveStaticPath(urlPath) {
-  // 先 dist，再 src
   const distPath = join(__dirname, 'dist', urlPath);
   if (existsSync(distPath) && statSync(distPath).isFile()) return distPath;
   const srcPath = join(__dirname, 'src', urlPath);
@@ -1914,7 +1929,6 @@ function serveStatic(req, res) {
   let urlPath = req.url.split('?')[0];
   if (urlPath === '/') urlPath = '/index.html';
 
-  // 安全：防止目录遍历
   const normalized = normalize(urlPath);
   if (normalized.startsWith('..') || normalized.startsWith(sep + '..')) {
     res.writeHead(403);
@@ -1924,7 +1938,6 @@ function serveStatic(req, res) {
 
   const filePath = resolveStaticPath(urlPath);
   if (!filePath) {
-    // SPA fallback：如果找不到文件且不是 API 请求，返回 index.html
     if (!urlPath.startsWith('/api/') && !urlPath.startsWith('/ws')) {
       const indexPath = resolveStaticPath('/index.html');
       if (indexPath) {
@@ -1953,243 +1966,21 @@ function serveStatic(req, res) {
 }
 
 // ============================================================
-//  HTTP 服务器 + WebSocket
+//  启动服务器
 // ============================================================
 const server = http.createServer((req, res) => {
-  // CORS（开发用）
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-
-  if (req.method === 'OPTIONS') {
-    res.writeHead(204);
-    res.end();
+  if (req.url === '/ws') {
+    res.writeHead(426);
+    res.end('Upgrade Required');
     return;
   }
-
-  if (req.method === 'GET') {
-    serveStatic(req, res);
-  } else {
-    res.writeHead(405);
-    res.end('Method Not Allowed');
-  }
+  serveStatic(req, res);
 });
 
-const wss = new WebSocketServer({ server, path: '/ws' });
+setupWebSocket(server);
 
-let nextPlayerId = 1;
-
-wss.on('connection', (ws) => {
-  ws.playerId = 'p_' + (nextPlayerId++);
-  ws.roomId = null;
-  ws.playerIndex = -1;
-
-  ws.on('message', (raw) => {
-    let msg;
-    try {
-      msg = JSON.parse(raw.toString());
-    } catch (e) {
-      return;
-    }
-    handleMessage(ws, msg);
-  });
-
-  ws.on('close', () => {
-    if (ws.roomId) {
-      const room = rooms.get(ws.roomId);
-      if (room) {
-        const idx = room.removePlayer(ws);
-        // 通知对方
-        const otherIdx = idx === 0 ? 1 : 0;
-        room.sendTo(otherIdx, { type: 'opponentDisconnected' });
-        // 如果房间空了，清理
-        if (room.isEmpty()) {
-          rooms.delete(ws.roomId);
-        }
-      }
-    }
-  });
-
-  ws.send(JSON.stringify({ type: 'connected', playerId: ws.playerId }));
-});
-
-function handleMessage(ws, msg) {
-  const { type, data } = msg;
-
-  switch (type) {
-    case 'createRoom':
-      handleCreateRoom(ws);
-      break;
-    case 'joinRoom':
-      handleJoinRoom(ws, data);
-      break;
-    case 'leaveRoom':
-      handleLeaveRoom(ws);
-      break;
-    case 'startGame':
-      handleStartGame(ws, data);
-      break;
-    case 'gameAction':
-      handleGameAction(ws, data);
-      break;
-    case 'chat':
-      handleChat(ws, data);
-      break;
-    default:
-      ws.send(JSON.stringify({ type: 'error', message: 'Unknown message type' }));
-  }
-}
-
-function handleCreateRoom(ws) {
-  if (ws.roomId) {
-    ws.send(JSON.stringify({ type: 'error', message: '你已在房间中' }));
-    return;
-  }
-  const roomId = generateRoomId();
-  const room = new Room(roomId, ws);
-  rooms.set(roomId, room);
-  ws.roomId = roomId;
-  ws.playerIndex = 0;
-  ws.send(JSON.stringify({
-    type: 'roomCreated',
-    data: { roomId, playerIndex: 0, isHost: true }
-  }));
-}
-
-function handleJoinRoom(ws, data) {
-  if (ws.roomId) {
-    ws.send(JSON.stringify({ type: 'error', message: '你已在房间中' }));
-    return;
-  }
-  const { roomId } = data || {};
-  if (!roomId || !/^\d{6}$/.test(roomId)) {
-    ws.send(JSON.stringify({ type: 'error', message: '房间号格式错误' }));
-    return;
-  }
-  const room = rooms.get(roomId);
-  if (!room) {
-    ws.send(JSON.stringify({ type: 'error', message: '房间不存在' }));
-    return;
-  }
-  if (room.isFull()) {
-    ws.send(JSON.stringify({ type: 'error', message: '房间已满' }));
-    return;
-  }
-  room.addPlayer(ws);
-  ws.roomId = roomId;
-  ws.playerIndex = 1;
-  ws.send(JSON.stringify({
-    type: 'roomJoined',
-    data: { roomId, playerIndex: 1, isHost: false }
-  }));
-  // 通知房主
-  room.sendTo(0, { type: 'playerJoined', data: { playerIndex: 1 } });
-}
-
-function handleLeaveRoom(ws) {
-  if (!ws.roomId) return;
-  const room = rooms.get(ws.roomId);
-  if (!room) { ws.roomId = null; return; }
-  const idx = room.removePlayer(ws);
-  const otherIdx = idx === 0 ? 1 : 0;
-  room.sendTo(otherIdx, { type: 'opponentLeft' });
-  if (room.isEmpty()) {
-    rooms.delete(ws.roomId);
-  }
-  ws.roomId = null;
-  ws.playerIndex = -1;
-  ws.send(JSON.stringify({ type: 'roomLeft' }));
-}
-
-function handleStartGame(ws, data) {
-  if (!ws.roomId) return;
-  const room = rooms.get(ws.roomId);
-  if (!room) return;
-  if (ws.playerIndex !== 0) {
-    ws.send(JSON.stringify({ type: 'error', message: '只有房主可以开始游戏' }));
-    return;
-  }
-  if (!room.isFull()) {
-    ws.send(JSON.stringify({ type: 'error', message: '需要两名玩家才能开始' }));
-    return;
-  }
-  const taskList = parseTasks(DEFAULT_TASKS_RAW);
-  room.startGame(taskList);
-}
-
-function handleGameAction(ws, data) {
-  if (!ws.roomId) return;
-  const room = rooms.get(ws.roomId);
-  if (!room || !room.started) return;
-
-  const { action, payload } = data || {};
-  const engine = room.engine;
-  const playerIdx = ws.playerIndex;
-  let result = false;
-
-  switch (action) {
-    case 'rollDice':
-      result = engine.rollDice(playerIdx);
-      break;
-    case 'rerollDice':
-      result = engine.rerollDice(playerIdx);
-      break;
-    case 'movePiece':
-      result = engine.movePiece(playerIdx, payload?.pieceIndex);
-      break;
-    case 'selectTask':
-      result = engine.selectTask(playerIdx, payload?.taskIndex);
-      break;
-    case 'closeEvent':
-      result = engine.closeEvent(playerIdx);
-      break;
-    case 'takeOffEquipment':
-      result = engine.takeOffEquipment(
-        playerIdx,
-        payload?.pieceIndex,
-        payload?.pos,
-        payload?.equipIndex
-      );
-      break;
-    case 'buySkipClothes':
-      result = engine.buySkipClothes(
-        playerIdx,
-        payload?.pieceIndex,
-        payload?.pos
-      );
-      break;
-    case 'buyItem':
-      result = engine.buyItem(playerIdx, payload?.itemId);
-      break;
-    case 'closeShop':
-      result = engine.closeShop(playerIdx);
-      break;
-    default:
-      ws.send(JSON.stringify({ type: 'error', message: 'Unknown action' }));
-  }
-
-  if (!result) {
-    ws.send(JSON.stringify({ type: 'actionRejected', data: { action } }));
-  }
-}
-
-function handleChat(ws, data) {
-  if (!ws.roomId) return;
-  const room = rooms.get(ws.roomId);
-  if (!room) return;
-  room.broadcast({
-    type: 'chat',
-    data: {
-      playerIndex: ws.playerIndex,
-      message: String(data?.message || '').slice(0, 200)
-    }
-  });
-}
-
-// ============================================================
-//  启动
-// ============================================================
 server.listen(PORT, () => {
-  console.log(`🚀 飞行棋联机服务器启动于 http://localhost:${PORT}`);
-  console.log(`   WebSocket: ws://localhost:${PORT}/ws`);
+  console.log(`飞行棋服务器运行在 http://localhost:${PORT}`);
+  console.log(`本地双人模式：直接打开 http://localhost:${PORT}`);
+  console.log(`联机模式：一人创建房间，另一人输入房间号加入`);
 });
