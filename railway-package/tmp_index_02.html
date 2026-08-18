@@ -1,0 +1,500 @@
+</div>
+
+<!-- 脱装备选择模态框 -->
+<div id="clothesModal" class="fixed inset-0 z-50 hidden items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
+  <div class="glass rounded-2xl p-6 max-w-md w-full modal-enter relative overflow-hidden">
+    <div class="card-shine" style="animation-duration: 3s;"></div>
+    <h2 class="font-display text-xl font-bold text-center mb-1 text-purple-300">👗 跨层挑战 👗</h2>
+    <p id="clothesDesc" class="text-xs text-center text-gray-400 mb-4">从下层走到了上一层！选择脱掉一件装备，或花费积分免脱</p>
+    <div class="text-center mb-3">
+      <span class="text-xs text-gray-400">当前积分：</span>
+      <span id="clothesScore" class="font-display font-bold text-yellow-400">0</span>
+    </div>
+    <p class="text-xs text-center text-gray-500 mb-3">点击要脱掉的装备：</p>
+    <div id="clothesList" class="grid grid-cols-2 gap-2 mb-4">
+      <!-- 装备按钮由 JS 生成 -->
+    </div>
+    <button id="clothesSkipBtn" class="btn btn-gold w-full">
+      💰 花费 <span id="clothesPrice" class="font-bold">10</span> 积分免脱
+    </button>
+  </div>
+</div>
+
+<!-- 胜利画面 -->
+<div id="victoryModal" class="fixed inset-0 z-50 hidden items-center justify-center p-4 bg-black/80 backdrop-blur-md">
+  <div class="text-center victory-burst">
+    <div class="text-6xl mb-4" id="victoryEmoji">🏆</div>
+    <h1 id="victoryText" class="font-display text-4xl md:text-5xl font-black mb-4 bg-gradient-to-r from-yellow-400 via-pink-400 to-blue-400 bg-clip-text text-transparent">玩家 1 获胜！</h1>
+    <p class="text-gray-400 mb-8" id="victorySubtitle">恭喜率先让两枚棋子到达终点</p>
+    <div class="flex gap-3 justify-center">
+      <button id="playAgain" class="btn btn-primary text-lg px-8 py-3">🎮 再来一局</button>
+      <button id="victoryConfig" class="btn btn-ghost text-lg px-8 py-3">⚙ 重新配置</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ============================================================
+//  GameController 抽象基类 — 为未来联机版本预留接口
+//  本地模式直接操作状态；未来可替换为 WebSocketController
+// ============================================================
+class GameController {
+  constructor() {
+    this.state = null;
+    this.listeners = {};
+  }
+
+  on(event, callback) {
+    if (!this.listeners[event]) this.listeners[event] = [];
+    this.listeners[event].push(callback);
+  }
+
+  emit(event, data) {
+    if (this.listeners[event]) {
+      this.listeners[event].forEach(cb => cb(data));
+    }
+  }
+
+  initGame(config) { throw new Error('Not implemented'); }
+  rollDice(player) { throw new Error('Not implemented'); }
+  movePiece(player, pieceIndex, steps) { throw new Error('Not implemented'); }
+  selectTask(player, taskIndex) { throw new Error('Not implemented'); }
+  closeEvent(player) { throw new Error('Not implemented'); }
+  buyItem(player, itemId) { throw new Error('Not implemented'); }
+  closeShop(player) { throw new Error('Not implemented'); }
+}
+
+// ============================================================
+//  LocalController — 本地双人对战实现
+// ============================================================
+class LocalController extends GameController {
+  constructor() {
+    super();
+    this.tasks = [];
+    this.currentTasks = [];
+    this.currentEvent = null;
+    this.shopItems = [];
+    this.pendingCellResolve = null;
+  }
+
+  // 棋盘定义：5 行 8 列，弓字路径
+  // 第 1 层（最下方）索引 0-7 向右
+  // 第 2 层索引 15-8 向左
+  // 第 3 层索引 16-23 向右
+  // 第 4 层索引 31-24 向左
+  // 第 5 层索引 32-39 向右
+  initGame(taskList) {
+    this.tasks = taskList;
+    // 按积分拆池：低分区1-4，高分区5-8
+    this.lowTierTasks = taskList.filter(t => t.reward <= 4);
+    this.highTierTasks = taskList.filter(t => t.reward >= 5);
+    // 各池独立牌堆：抽完一轮不重复，全部抽完后重新洗牌
+    this.lowTierDeck = this.shuffleArray([...this.lowTierTasks]);
+    this.highTierDeck = this.shuffleArray([...this.highTierTasks]);
+    // 事件牌堆：洗牌抽取，全部抽完后重新洗牌
+    this.eventDeck = this.shuffleArray([...EVENTS]);
+    const makeEquipment = () => ([
+      { id: 'top', name: '上衣', icon: '👕', on: true },
+      { id: 'pants', name: '裤子', icon: '👖', on: true },
+      { id: 'bra', name: '内衣（特殊）', icon: '🎀', on: true },
+      { id: 'briefs', name: '内裤', icon: '🩲', on: true }
+    ]);
+    this.state = {
+      currentPlayer: 0, // 0 = P1, 1 = P2
+      phase: 'idle', // idle → rolling → selecting → moving → resolving → waiting
+      diceValue: 0,
+      rerollCount: 0, // 本回合已重投次数，新回合重置
+      players: [
+        { score: 15, pieces: [0, 0], finished: [false, false], equipment: makeEquipment(), skipClothesStreak: 0, allDone: false, inventory: {} },
+        { score: 15, pieces: [0, 0], finished: [false, false], equipment: makeEquipment(), skipClothesStreak: 0, allDone: false, inventory: {} }
+      ],
+      winner: null,
+      endgame: false, // 终局追赶阶段：有玩家已完赛
+      extraTurn: null  // 额外回合标记：{ player: 0|1, count: n }，count 表示剩余额外回合数
+    };
+    this.emit('stateChange', this.state);
+  }
+
+  rollDice() {
+    if (this.state.phase !== 'idle') return;
+    const p = this.state.players[this.state.currentPlayer];
+    if (p.allDone) { this.endTurn(); return; }
+
+    this.state.phase = 'rolling';
+    this._doDiceRollEffects();
+    this.emit('diceRoll', { value: this.state.diceValue, rerollCount: this.state.rerollCount });
+    this.emit('stateChange', this.state);
+  }
+
+  rerollDice() {
+    if (this.state.phase !== 'selecting') return;
+    const p = this.state.players[this.state.currentPlayer];
+    const cost = (this.state.rerollCount + 1) * 2;
+    if (p.score < cost) return;
+
+    p.score -= cost;
+    this.state.rerollCount += 1;
+    this.emit('scoreChange', { player: this.state.currentPlayer, delta: -cost, score: p.score });
+
+    this.state.phase = 'rolling';
+    this._doDiceRollEffects();
+    this.emit('diceRoll', { value: this.state.diceValue, rerollCount: this.state.rerollCount, isReroll: true });
+    this.emit('stateChange', this.state);
+  }
+
+  // 掷骰效果统一处理：基础点数 + 道具效果
+  _doDiceRollEffects() {
+    const currentPlayer = this.state.currentPlayer;
+    const enemy = 1 - currentPlayer;
+
+    let value = Math.floor(Math.random() * 6) + 1;
+    let bonusSteps = 0;
+    let enemyPenalty = 0;
+
+    // 作弊骰子：必6
+    if (this.hasItem(currentPlayer, 'cheatDice')) {
+      value = 6;
+      this.useItem(currentPlayer, 'cheatDice');
+      this.emit('itemEffect', { player: currentPlayer, itemId: 'cheatDice', detail: '作弊骰子！必出6点' });
+    }
+    // 幸运骰子：+2格
+    if (this.hasItem(currentPlayer, 'luckyDice')) {
+      bonusSteps += 2;
+      this.useItem(currentPlayer, 'luckyDice');
+      this.emit('itemEffect', { player: currentPlayer, itemId: 'luckyDice', detail: '幸运骰子！移动+2' });
+    }
+    // 诅咒骰子（对方持有）：-1~-2 格，最低1格
+    if (this.hasItem(enemy, 'curseDice')) {
+      enemyPenalty = 1 + Math.floor(Math.random() * 2);
+      this.useItem(enemy, 'curseDice');
+      this.emit('itemEffect', { player: enemy, itemId: 'curseDice', detail: `诅咒骰子！对方-${enemyPenalty}格` });
+    }
+
+    this.state.diceValue = value;
+    this.state.diceBonus = bonusSteps - enemyPenalty;
+
+    // 自动骰子：标记自动移动（掷完后自动选棋）
+    if (this.hasItem(currentPlayer, 'autoDice')) {
+      this.useItem(currentPlayer, 'autoDice');
+      this.state.autoMovePending = true;
+      this.emit('itemEffect', { player: currentPlayer, itemId: 'autoDice', detail: '自动骰子！自动选择棋子' });
+    }
+  }
+
+  onDiceAnimationEnd() {
+    // 掷骰动画结束后，直接进入选棋阶段，同时显示重投按钮
+    this.state.phase = 'selecting';
+    const p = this.state.players[this.state.currentPlayer];
+    const cost = (this.state.rerollCount + 1) * 2;
+    this.emit('selectPiece', this.state.diceValue);
+    this.emit('showRerollChoice', {
+      player: this.state.currentPlayer,
+      diceValue: this.state.diceValue,
+      rerollCost: cost,
+      canAfford: p.score >= cost
+    });
+
+    // 自动骰子：自动选择棋子
+    if (this.state.autoMovePending === undefined && false) {}
+    // 实际由 rollDice 设置 autoMovePending，在 selecting 阶段检查
+    if (this.state.autoMovePending) {
+      // 找第一枚未完成的棋子
+      for (let i = 0; i < 2; i++) {
+        if (!p.finished[i] && p.pieces[i] < 39) {
+          setTimeout(() => this.movePiece(i), 300);
+          break;
+        }
+      }
+    }
+  }
+
+  acceptDice() {
+    // 保留向后兼容：直接进入选棋（已在 selecting，无操作）
+    if (this.state.phase !== 'selecting') return;
+  }
+
+  movePiece(pieceIndex) {
+    if (this.state.phase !== 'selecting') return;
+    const p = this.state.players[this.state.currentPlayer];
+    if (p.finished[pieceIndex]) return;
+
+    this.state.phase = 'moving';
+    this.emit('stateChange', this.state);
+
+    const fromPos = p.pieces[pieceIndex];
+    const bonus = this.state.diceBonus || 0;
+    const steps = Math.max(1, this.state.diceValue + bonus); // 最低移动1格
+    const toPos = Math.min(fromPos + steps, 39);
+
+    // 自动骰子标记：本次移动跨层不触发脱装
+    if (this.state.autoMovePending) {
+      this.state.autoMoveSkipClothes = true;
+      this.state.autoMovePending = false;
+    }
+
+    this.emit('pieceMove', {
+      player: this.state.currentPlayer,
+      pieceIndex,
+      fromPos,
+      toPos
+    });
+  }
+
+  // 棋子移动动画结束后调用：先碰撞判定，再结算格子效果
+  // 规则：叠棋时不结算格子效果，直接给再投骰奖励
+  onMoveComplete(player, pieceIndex, fromPos, toPos) {
+    const p = this.state.players[player];
+    p.pieces[pieceIndex] = toPos;
+
+    // 到达终点
+    if (toPos >= 39) {
+      p.finished[pieceIndex] = true;
+      this.emit('pieceFinished', { player, pieceIndex });
+      this.emit('stateChange', this.state);
+
+      // 检查是否两枚棋子都到终点
+      if (p.finished.every(f => f)) {
+        p.allDone = true;
+        this.state.endgame = this.state.players.some(x => !x.allDone);
+
+        // 双方都完赛 → 比较积分判胜负
+        if (this.state.players.every(x => x.allDone)) {
+          this.state.phase = 'over';
+          const s0 = this.state.players[0].score;
+          const s1 = this.state.players[1].score;
+          let winner;
+          if (s0 > s1) winner = 0;
+          else if (s1 > s0) winner = 1;
+          else winner = -1; // 平局
+          this.state.winner = winner;
+          setTimeout(() => this.emit('victory', { winner, score0: s0, score1: s1 }), 800);
+          this.emit('stateChange', this.state);
+          return;
+        }
+      }
+
+      this.endTurn();
+      return;
+    }
+
+    // 跨层检测：非传送移动 + 层数增加 + 有装备 → 触发脱装备选择
+    const fromRow = this.posToRowCol(fromPos).row;
+    const toRow = this.posToRowCol(toPos).row;
+    const onClothes = p.equipment.filter(e => e.on).length;
+    const isNormalMove = fromPos !== undefined && fromPos !== toPos;
+
+    if (isNormalMove && toRow > fromRow && onClothes > 0) {
+      // 自动骰子：跨层不触发脱装
+      if (this.state.autoMoveSkipClothes) {
+        this.state.autoMoveSkipClothes = false;
+        this.resolveCollisionThenCell(player, pieceIndex, toPos);
+        return;
+      }
+      // 免脱卡：自动免脱，重置计数
+      if (this.hasItem(player, 'freeClothes')) {
+        this.useItem(player, 'freeClothes');
+        p.skipClothesStreak = 0;
+        this.emit('itemEffect', { player, itemId: 'freeClothes', detail: '免脱卡生效！' });
+        this.resolveCollisionThenCell(player, pieceIndex, toPos);
+        return;
+      }
+      this.state.phase = 'clothesChoice';
+      this.emit('stateChange', this.state);
+      const price = this.getSkipClothesPrice(player);
+      this.emit('showClothesChoice', {
+        player,
+        pieceIndex,
+        pos: toPos,
+        price,
+        canAfford: p.score >= price
+      });
+      return;
+    }
+
+    // 第一步：碰撞判定
+    this.resolveCollisionThenCell(player, pieceIndex, toPos);
+  }
+
+  getSkipClothesPrice(player) {
+    const streak = this.state.players[player].skipClothesStreak || 0;
+    return 10 + streak * 5;
+  }
+
+  // 选择脱掉一件装备
+  takeOffEquipment(player, pieceIndex, pos, equipIndex) {
+    const p = this.state.players[player];
+    if (!p.equipment[equipIndex] || !p.equipment[equipIndex].on) return;
+    const equipId = p.equipment[equipIndex].id;
+    p.equipment[equipIndex].on = false;
+    // 脱装备重置免脱连续计数
+    p.skipClothesStreak = 0;
+
+    // 窃贼手套：对方持有则装备归对方（如果对方没有这件）
+    const enemy = 1 - player;
+    if (this.hasItem(enemy, 'thiefGlove')) {
+      const enemyEq = this.state.players[enemy].equipment.find(e => e.id === equipId);
+      if (enemyEq && !enemyEq.on) {
+        enemyEq.on = true;
+        this.useItem(enemy, 'thiefGlove');
+        this.emit('equipmentChange', { player: enemy, action: 'steal', equipId });
+        this.emit('itemEffect', { player: enemy, itemId: 'thiefGlove', detail: `窃贼手套！获得${equipId}` });
+      }
+    }
+
+    this.emit('equipmentChange', { player, equipIndex, action: 'takeoff' });
+    this.emit('stateChange', this.state);
+
+    this.emit('hideClothesChoice');
+    // 继续进入碰撞 + 格子结算
+    this.resolveCollisionThenCell(player, pieceIndex, pos);
+  }
+
+  // 花费积分购买免脱
+  buySkipClothes(player, pieceIndex, pos) {
+    const p = this.state.players[player];
+    const price = this.getSkipClothesPrice(player);
+    if (p.score < price) return;
+    p.score -= price;
+    p.skipClothesStreak = (p.skipClothesStreak || 0) + 1;
+    this.emit('scoreChange', { player, delta: -price, score: p.score });
+    this.emit('equipmentChange', { player, action: 'skip', price });
+    this.emit('stateChange', this.state);
+
+    this.emit('hideClothesChoice');
+    this.resolveCollisionThenCell(player, pieceIndex, pos);
+  }
+
+  resolveCollisionThenCell(player, pieceIndex, pos) {
+    this.state.phase = 'resolving';
+    this.emit('stateChange', this.state);
+
+    // 先做碰撞检测，碰撞完成后再结算格子
+    this.checkCollision(player, pieceIndex, pos, (skipCellEffect) => {
+      if (skipCellEffect) {
+        // 叠棋奖励触发，不结算格子效果，直接结束（保持当前玩家再投骰）
+        return;
+      }
+      // 结算格子效果
+      this.resolveCellEffect(player, pieceIndex, pos);
+    });
+  }
+
+  resolveCellEffect(player, pieceIndex, pos) {
+    const cellType = CELL_TYPES[pos];
+
+    const finishAndEndTurn = () => {
+      this.endTurn();
+    };
+
+    switch (cellType) {
+      case 'task':
+        // 第1张从低分区（1-4分）抽，第2张从高分区（5-8分）抽
+        const task1 = this.drawLowTierTask();
+        const task2 = this.drawHighTierTask();
+        this.currentTasks = [task1, task2].filter(Boolean);
+        this.emit('showTask', { player, tasks: this.currentTasks });
+        this.pendingCellResolve = { player, pieceIndex, pos, afterResolve: finishAndEndTurn };
+        break;
+
+      case 'event':
+        this.currentEvent = this.drawEvent();
+        this.emit('showEvent', { player, event: this.currentEvent });
+        this.pendingCellResolve = { player, pieceIndex, pos, afterResolve: () => {
+          // 事件弹窗关闭后执行事件效果
+          this.state.phase = 'resolving';
+          this.emit('stateChange', this.state);
+          this.triggerEventEffect(this.currentEvent, {
+            player, pieceIndex, pos,
+            onDone: () => { this.endTurn(); }
+          });
+        }};
+        break;
+
+      case 'teleport':
+        this.doTeleport(player, pieceIndex, pos);
+        break;
+
+      case 'shop':
+        this.openShop(player);
+        this.pendingCellResolve = { player, pieceIndex, pos, afterResolve: finishAndEndTurn };
+        break;
+
+      default:
+        // 起点 / 普通格子直接结束回合
+        finishAndEndTurn();
+    }
+  }
+
+  selectTask(taskIndex) {
+    const task = this.currentTasks[taskIndex];
+    if (!task) return;
+    const currentPlayer = this.state.currentPlayer;
+    const p = this.state.players[currentPlayer];
+    const enemy = 1 - currentPlayer;
+    // 装备缺失加成：每少一件 +2 分
+    const missingEquip = p.equipment.filter(e => !e.on).length;
+    const bonus = missingEquip * 2;
+    let totalReward = task.reward + bonus;
+
+    // 白嫖卡：两个任务都给
+    if (this.hasItem(currentPlayer, 'freeCard') && this.currentTasks.length >= 2) {
+      this.useItem(currentPlayer, 'freeCard');
+      const otherTask = this.currentTasks[1 - taskIndex];
+      if (otherTask) totalReward += otherTask.reward + bonus;
+      this.emit('itemEffect', { player: currentPlayer, itemId: 'freeCard', detail: '白嫖卡！两个任务都给' });
+    }
+
+    // 双倍积分卡：翻倍
+    if (this.hasItem(currentPlayer, 'doubleScore')) {
+      this.useItem(currentPlayer, 'doubleScore');
+      totalReward *= 2;
+      this.emit('itemEffect', { player: currentPlayer, itemId: 'doubleScore', detail: '双倍积分！' });
+    }
+
+    // 调包卡：对方持有则积分给对方
+    let rewardPlayer = currentPlayer;
+    if (this.hasItem(enemy, 'switchCard')) {
+      this.useItem(enemy, 'switchCard');
+      rewardPlayer = enemy;
+      this.emit('itemEffect', { player: enemy, itemId: 'switchCard', detail: '调包卡！积分归我' });
+    }
+
+    this.state.players[rewardPlayer].score += totalReward;
+    this.emit('scoreChange', { player: rewardPlayer, delta: totalReward, score: this.state.players[rewardPlayer].score });
+    this.emit('stateChange', this.state);
+
+    this.emit('hideTask');
+    this.finishCellResolve();
+  }
+
+  closeEvent() {
+    this.emit('hideEvent');
+    this.finishCellResolve();
+  }
+
+  finishCellResolve() {
+    if (this.pendingCellResolve) {
+      const { player, pieceIndex, pos, afterResolve } = this.pendingCellResolve;
+      this.pendingCellResolve = null;
+      afterResolve();
+    }
+  }
+
+  doTeleport(player, pieceIndex, pos) {
+    // 计算当前行和列
+    const { row, col } = this.posToRowCol(pos);
+    // 传送陷阱：对方持有则改为向下传送
+    const enemy = 1 - player;
+    let dir = 1; // 默认向上
+    if (this.hasItem(enemy, 'teleportTrap')) {
+      this.useItem(enemy, 'teleportTrap');
+      dir = -1;
+      this.emit('itemEffect', { player: enemy, itemId: 'teleportTrap', detail: '传送陷阱！改为向下传送' });
+    }
+    const newRow = row + dir;
+    if (newRow > 4 || newRow < 0) { this.resolveCollisionThenCell(player, pieceIndex, pos); return; }
+
+    const newPos = this.rowColToPos(newRow, col);
+    const p = this.state.players[player];
+    p.pieces[pieceIndex] = newPos;
+

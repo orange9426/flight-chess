@@ -1,0 +1,500 @@
+        <div class="ci-icon">${eq.icon}</div>
+        <div class="ci-name">脱掉 ${eq.name}</div>
+      `;
+      btn.onclick = () => {
+        this.game.takeOffEquipment(player, pieceIndex, pos, idx);
+      };
+      list.appendChild(btn);
+    });
+    this.$('clothesScore').textContent = p.score;
+    this.$('clothesPrice').textContent = price;
+    const skipBtn = this.$('clothesSkipBtn');
+    if (canAfford) {
+      skipBtn.disabled = false;
+      skipBtn.classList.remove('opacity-50', 'cursor-not-allowed');
+    } else {
+      skipBtn.disabled = true;
+      skipBtn.classList.add('opacity-50', 'cursor-not-allowed');
+    }
+    skipBtn.onclick = () => {
+      if (!canAfford) return;
+      this.game.buySkipClothes(player, pieceIndex, pos);
+    };
+    this.clothesModal.classList.remove('hidden');
+    this.clothesModal.classList.add('flex');
+  }
+
+  hideClothesModal() {
+    this.clothesModal.classList.add('hidden');
+    this.clothesModal.classList.remove('flex');
+  }
+
+  highlightCurrentPlayer(player) {
+    if (player === 0) {
+      this.p1Info.style.borderColor = 'var(--p1)';
+      this.p1Info.style.boxShadow = '0 0 20px var(--p1-glow)';
+      this.p2Info.style.borderColor = 'var(--border)';
+      this.p2Info.style.boxShadow = 'none';
+    } else {
+      this.p2Info.style.borderColor = 'var(--p2)';
+      this.p2Info.style.boxShadow = '0 0 20px var(--p2-glow)';
+      this.p1Info.style.borderColor = 'var(--border)';
+      this.p1Info.style.boxShadow = 'none';
+    }
+  }
+
+  onDiceClick() {
+    if (!this.game.state || this.game.state.phase !== 'idle') return;
+    // 联机模式：只能在自己回合操作
+    if (this.mode === 'online' && this.game.state.currentPlayer !== this.myPlayerIndex) return;
+    this.game.rollDice();
+  }
+
+  animateDice(value) {
+    this.diceHint.textContent = '掷骰中...';
+    this.rerollBar.classList.add('hidden');
+    // 动画开始：隐藏 2D 最终面，显示 3D 骰子
+    this.diceContainer.classList.remove('show-final');
+    // 重置到初始姿态（无旋转）
+    this.dice.style.transition = 'none';
+    this.dice.style.transform = 'rotateX(0deg) rotateY(0deg) rotateZ(0deg)';
+    // 强制重绘
+    void this.dice.offsetWidth;
+
+    // 随机多圈翻滚，最后停在随机角度（最终结果由 2D 面呈现，3D 仅做翻滚视觉）
+    const spinsX = 5 + Math.floor(Math.random() * 4);  // 5-8 圈
+    const spinsY = 6 + Math.floor(Math.random() * 4);  // 6-9 圈
+    const spinsZ = 2 + Math.floor(Math.random() * 3);  // 2-4 圈
+    const endX = (Math.random() < 0.5 ? -1 : 1) * spinsX * 360 + (Math.random() - 0.5) * 180;
+    const endY = (Math.random() < 0.5 ? -1 : 1) * spinsY * 360 + (Math.random() - 0.5) * 180;
+    const endZ = (Math.random() < 0.5 ? -1 : 1) * spinsZ * 360;
+
+    // 下一帧再启动过渡，保证重排后动画可触发
+    requestAnimationFrame(() => {
+      this.dice.style.transition = 'transform 1.3s cubic-bezier(0.12, 0.82, 0.22, 1)';
+      this.dice.style.transform = `rotateX(${endX}deg) rotateY(${endY}deg) rotateZ(${endZ}deg)`;
+    });
+
+    // 粒子效果
+    const diceRect = this.diceContainer.getBoundingClientRect();
+    this.spawnParticles(diceRect.left + diceRect.width / 2, diceRect.top + diceRect.height / 2, '#60a5fa', 15);
+
+    const totalDuration = 1300;
+    // 动画最后约 250ms 开始淡入最终 2D 面（交叉过渡）
+    const crossfadeDelay = totalDuration - 250;
+
+    setTimeout(() => {
+      // 用数值直接渲染 2D 骰子面，确保点数 === 实际结果
+      this.renderDiceFace(value);
+      this.diceContainer.classList.add('show-final');
+    }, crossfadeDelay);
+
+    setTimeout(() => {
+      this.diceHint.textContent = `点数 ${value}`;
+      this.game.onDiceAnimationEnd();
+    }, totalDuration);
+  }
+
+  // 2D 骰子面渲染：value 是几就画几个点，不经过任何旋转角度计算
+  renderDiceFace(value) {
+    const v = Math.max(1, Math.min(6, Math.floor(value)));
+    const dotPositions = {
+      1: [[2, 2]],
+      2: [[1, 1], [3, 3]],
+      3: [[1, 1], [2, 2], [3, 3]],
+      4: [[1, 1], [1, 3], [3, 1], [3, 3]],
+      5: [[1, 1], [1, 3], [2, 2], [3, 1], [3, 3]],
+      6: [[1, 1], [2, 1], [3, 1], [1, 3], [2, 3], [3, 3]]
+    };
+    const positions = dotPositions[v] || dotPositions[1];
+    const dotsHtml = positions.map(([row, col]) =>
+      `<span class="dot" style="grid-row: ${row}; grid-column: ${col};"></span>`
+    ).join('');
+    this.diceFinal.innerHTML = dotsHtml;
+  }
+
+  showRerollBar({ diceValue, rerollCost, canAfford }) {
+    this.diceHint.textContent = `点数 ${diceValue}`;
+    this.rerollBar.classList.remove('hidden');
+    const costSpan = this.rerollDiceBtn.querySelector('span');
+    if (costSpan) costSpan.textContent = `(花费 ${rerollCost})`;
+    if (canAfford) {
+      this.rerollDiceBtn.disabled = false;
+      this.rerollDiceBtn.classList.remove('opacity-50', 'cursor-not-allowed');
+    } else {
+      this.rerollDiceBtn.disabled = true;
+      this.rerollDiceBtn.classList.add('opacity-50', 'cursor-not-allowed');
+    }
+  }
+
+  hideRerollBar() {
+    this.rerollBar.classList.add('hidden');
+  }
+
+  enablePieceSelection(steps) {
+    const currentPlayer = this.game.state.currentPlayer;
+    const p = this.game.state.players[currentPlayer];
+    const selectablePieces = [];
+
+    // 叠棋奖励触发时，自动移动刚才的那枚棋子，不进入选择界面
+    if (this._autoMovePieceIndex !== undefined && this._autoMovePieceIndex !== null) {
+      const idx = this._autoMovePieceIndex;
+      this._autoMovePieceIndex = null;
+      if (!p.finished[idx]) {
+        this.showInfo(`叠棋奖励！自动前进 ${steps} 步`);
+        setTimeout(() => this.selectPiece(idx), 200);
+        return;
+      }
+    }
+
+    for (let i = 0; i < 2; i++) {
+      if (!p.finished[i]) {
+        selectablePieces.push(i);
+        this.pieceEls[currentPlayer][i].classList.add('selectable');
+        this.pieceEls[currentPlayer][i].style.pointerEvents = 'auto';
+        this.pieceEls[currentPlayer][i].onclick = () => {
+          this.selectPiece(i);
+        };
+      }
+    }
+
+    this.showInfo(`玩家 ${currentPlayer + 1} 掷出 ${steps} 点！选择要移动的棋子`);
+
+    // 如果只有一枚可移动棋子，自动选中
+    if (selectablePieces.length === 1) {
+      setTimeout(() => this.selectPiece(selectablePieces[0]), 500);
+    }
+  }
+
+  selectPiece(pieceIndex) {
+    const currentPlayer = this.game.state.currentPlayer;
+    // 清除可选状态
+    for (let i = 0; i < 2; i++) {
+      this.pieceEls[currentPlayer][i].classList.remove('selectable');
+      this.pieceEls[currentPlayer][i].style.pointerEvents = 'none';
+      this.pieceEls[currentPlayer][i].onclick = null;
+    }
+    this.game.movePiece(pieceIndex);
+  }
+
+  async animatePieceMove(player, pieceIndex, fromPos, toPos) {
+    const piece = this.pieceEls[player][pieceIndex];
+
+    // 动画期间锁定位置，防止 stateChange 事件把棋子重置回旧位置造成闪帧
+    this._pieceAnimating = true;
+
+    // 逐格移动动画（跳动效果）
+    const steps = toPos - fromPos;
+    for (let i = 1; i <= steps; i++) {
+      const pos = fromPos + i;
+      const cell = this.cells[pos];
+      if (!cell) break;
+
+      const boardRect = this.board.getBoundingClientRect();
+      const cellRect = cell.getBoundingClientRect();
+      const midX = cellRect.left - boardRect.left + cellRect.width / 2;
+      const midY = cellRect.top - boardRect.top + cellRect.height / 2;
+
+      // 落位 + 轻微弹跳
+      piece.style.left = `${midX}px`;
+      piece.style.top = `${midY}px`;
+      piece.style.transform = 'translate(-50%, -60%) scale(1.15)';
+
+      await new Promise(r => setTimeout(r, 120));
+
+      piece.style.transform = 'translate(-50%, -50%) scale(1)';
+
+      await new Promise(r => setTimeout(r, 80));
+    }
+
+    // 动画结束：先通知逻辑层更新 state（同步触发 stateChange + 弹窗事件）
+    // 此时 _pieceAnimating 仍为 true，updateUI 跳过位置重算，棋子保持在 toPos
+    this.game.onMoveComplete(player, pieceIndex, fromPos, toPos);
+
+    // 双重 rAF 确保浏览器完成一帧渲染后再解除锁定并刷新位置，
+    // 此时 state 已是最新值，棋子视觉位置与 state 一致，无闪帧
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        this._pieceAnimating = false;
+        this.updatePiecesFromState();
+      });
+    });
+  }
+
+  animateTeleport(player, pieceIndex, toPos) {
+    const piece = this.pieceEls[player][pieceIndex];
+    const cell = this.cells[toPos];
+
+    // 传送动画期间锁定位置，避免 stateChange 导致位置跳变
+    this._pieceAnimating = true;
+
+    // 传送消失效果
+    piece.style.transform = 'translate(-50%, -50%) scale(0) rotate(360deg)';
+    piece.style.opacity = '0';
+
+    setTimeout(() => {
+      // state 已经更新为目标位置，直接按正式逻辑定位
+      this.updatePiecesFromState();
+      // 把当前棋子设为消失状态，为出现动画做准备
+      piece.style.transform = 'translate(-50%, -50%) scale(0)';
+      piece.style.opacity = '0';
+      // 强制回流
+      void piece.offsetWidth;
+      piece.style.transform = 'translate(-50%, -50%) scale(1.3)';
+      piece.style.opacity = '1';
+
+      this.spawnParticles(
+        cellRect.left + cellRect.width / 2,
+        cellRect.top + cellRect.height / 2,
+        '#2dd4bf', 20
+      );
+
+      setTimeout(() => {
+        piece.style.transform = 'translate(-50%, -50%) scale(1)';
+        // 双重 rAF 后解除锁定，确保渲染稳定
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => {
+            this._pieceAnimating = false;
+            this.updatePiecesFromState();
+          });
+        });
+      }, 200);
+    }, 300);
+  }
+
+  showTaskModal(player, tasks) {
+    this.taskSelectable = true;
+    const p = this.game.state.players[player];
+    const missing = (p.equipment || []).filter(e => !e.on).length;
+    const bonus = missing * 2;
+
+    const formatReward = (reward) => {
+      if (bonus > 0) {
+        return `<span class="text-gray-400">${reward}</span> <span class="text-purple-300">(+${bonus})</span> <span class="text-yellow-400">= ${reward + bonus}</span>`;
+      }
+      return `+${reward} 分`;
+    };
+
+    this.$('taskText1').textContent = tasks[0]?.desc || '';
+    this.$('taskReward1').innerHTML = formatReward(tasks[0]?.reward || 0);
+    this.$('taskText2').textContent = tasks[1]?.desc || '';
+    this.$('taskReward2').innerHTML = formatReward(tasks[1]?.reward || 0);
+
+    this.taskModal.classList.remove('hidden');
+    this.taskModal.classList.add('flex');
+
+    // 卡片动效
+    const c1 = this.$('taskCard1');
+    const c2 = this.$('taskCard2');
+    c1.classList.remove('card-reveal');
+    c2.classList.remove('card-reveal');
+    void c1.offsetWidth;
+    c1.classList.add('card-reveal');
+    setTimeout(() => c2.classList.add('card-reveal'), 150);
+  }
+
+  hideTaskModal() {
+    this.taskModal.classList.add('hidden');
+    this.taskModal.classList.remove('flex');
+  }
+
+  showEventModal(event) {
+    this.$('eventName').textContent = event.name;
+    this.$('eventNameDisplay').textContent = event.name;
+    this.$('eventDesc').textContent = event.desc;
+
+    this.eventModal.classList.remove('hidden');
+    this.eventModal.classList.add('flex');
+  }
+
+  hideEventModal() {
+    this.eventModal.classList.add('hidden');
+    this.eventModal.classList.remove('flex');
+  }
+
+  showShopModal(player, items, score) {
+    this.currentShopItems = items;
+    this.$('shopScore').textContent = score;
+    this.updateShopItems();
+
+    this.shopModal.classList.remove('hidden');
+    this.shopModal.classList.add('flex');
+  }
+
+  updateShopItems() {
+    const container = this.$('shopItems');
+    const playerScore = this.game.state.players[this.game.state.currentPlayer].score;
+
+    container.innerHTML = '';
+    this.currentShopItems.forEach((item) => {
+      const isEquip = item.type === 'equipment';
+      const isOwned = isEquip && item.owned;
+      const canAfford = playerScore >= item.price && !item.purchased && !isOwned;
+
+      let borderClass = '';
+      if (item.purchased) {
+        borderClass = 'border-green-500/50 opacity-60';
+      } else if (isOwned) {
+        borderClass = 'border-gray-600/50 opacity-50';
+      } else if (canAfford) {
+        borderClass = 'affordable border-yellow-600/50';
+      } else {
+        borderClass = 'unaffordable border-gray-600/50';
+      }
+
+      const tag = isEquip ? '<span class="inline-block text-[10px] px-1.5 py-0.5 rounded bg-purple-500/30 text-purple-300 ml-1 align-middle">装备</span>' : '';
+      const icon = item.icon ? `<span class="text-base mr-1">${item.icon}</span>` : '';
+      const statusText = item.purchased ? '✓ 已购买' : isOwned ? '已拥有' : '';
+
+      const div = document.createElement('div');
+      div.className = `shop-item glass rounded-xl p-3 flex items-center justify-between border ${borderClass}`;
+      div.innerHTML = `
+        <div class="flex-1 min-w-0">
+          <div class="font-medium text-sm">${icon}${item.name}${tag} ${statusText ? `<span class="text-xs ${item.purchased ? 'text-green-400' : 'text-gray-500'}">${statusText}</span>` : ''}</div>
+          <div class="text-xs text-gray-400 mt-0.5">${item.desc}</div>
+        </div>
+        <div class="shrink-0 ml-3 text-right">
+          <div class="font-display font-bold text-yellow-400">${item.price} 分</div>
+        </div>
+      `;
+      if (!item.purchased && !isOwned && canAfford) {
+        div.addEventListener('click', () => {
+          this.game.buyItem(item.id);
+        });
+      }
+      container.appendChild(div);
+    });
+
+    this.$('shopScore').textContent = playerScore;
+  }
+
+  hideShopModal() {
+    this.shopModal.classList.add('hidden');
+    this.shopModal.classList.remove('flex');
+  }
+
+  showInfo(text) {
+    this.infoText.textContent = text;
+    this.infoText.classList.remove('fade-in');
+    void this.infoText.offsetWidth;
+    this.infoText.classList.add('fade-in');
+  }
+
+  animateScoreChange(player, delta) {
+    const scoreEl = player === 0 ? this.p1Score : this.p2Score;
+    const color = player === 0 ? '#60a5fa' : '#f472b6';
+    const sign = delta > 0 ? '+' : '';
+
+    const popup = document.createElement('div');
+    popup.className = 'score-popup';
+    popup.textContent = `${sign}${delta}`;
+    popup.style.color = delta > 0 ? (player === 0 ? '#60a5fa' : '#f472b6') : '#ef4444';
+    popup.style.left = '50%';
+    popup.style.top = '0';
+    popup.style.transform = 'translateX(-50%)';
+
+    scoreEl.parentElement.style.position = 'relative';
+    scoreEl.parentElement.appendChild(popup);
+
+    setTimeout(() => popup.remove(), 1200);
+
+    // 数字跳动
+    scoreEl.style.transform = 'scale(1.3)';
+    scoreEl.style.transition = 'transform 0.2s';
+    setTimeout(() => { scoreEl.style.transform = 'scale(1)'; }, 200);
+  }
+
+  showVictory(data) {
+    const { winner, score0, score1 } = data;
+    let title, subtitle, color;
+    if (winner === -1) {
+      title = '⚖️ 平局！';
+      subtitle = `双方积分相同 (${score0} : ${score1})`;
+      color = '#fbbf24';
+    } else {
+      title = `玩家 ${winner + 1} 获胜！`;
+      subtitle = `最终积分 — 玩家1：${score0} 分　玩家2：${score1} 分`;
+      color = winner === 0 ? '#60a5fa' : '#f472b6';
+    }
+    this.$('victoryText').textContent = title;
+    this.$('victorySubtitle').textContent = subtitle;
+    const bg = winner === -1
+      ? 'linear-gradient(to right, #fbbf24, #f59e0b, #fbbf24)'
+      : winner === 0
+        ? 'linear-gradient(to right, #60a5fa, #818cf8, #a78bfa)'
+        : 'linear-gradient(to right, #f472b6, #e879f9, #facc15)';
+    this.$('victoryText').style.background = bg;
+    this.$('victoryText').style.webkitBackgroundClip = 'text';
+    this.$('victoryText').style.backgroundClip = 'text';
+    this.$('victoryText').style.webkitTextFillColor = 'transparent';
+
+    this.victoryModal.classList.remove('hidden');
+    this.victoryModal.classList.add('flex');
+
+    // 胜利粒子爆炸
+    for (let i = 0; i < 5; i++) {
+      setTimeout(() => {
+        this.spawnParticles(
+          window.innerWidth * (0.3 + Math.random() * 0.4),
+          window.innerHeight * (0.3 + Math.random() * 0.4),
+          color,
+          15
+        );
+      }, i * 200);
+    }
+  }
+
+  // 粒子效果
+  spawnParticles(x, y, color, count = 12) {
+    for (let i = 0; i < count; i++) {
+      const p = document.createElement('div');
+      p.className = 'particle';
+      p.style.left = `${x}px`;
+      p.style.top = `${y}px`;
+      p.style.background = color;
+      p.style.boxShadow = `0 0 8px ${color}`;
+      p.style.width = `${4 + Math.random() * 6}px`;
+      p.style.height = p.style.width;
+
+      this.particleContainer.appendChild(p);
+
+      const angle = (Math.PI * 2 * i) / count + Math.random() * 0.5;
+      const distance = 40 + Math.random() * 80;
+      const dx = Math.cos(angle) * distance;
+      const dy = Math.sin(angle) * distance;
+
+      p.animate([
+        { transform: 'translate(0, 0) scale(1)', opacity: 1 },
+        { transform: `translate(${dx}px, ${dy}px) scale(0)`, opacity: 0 }
+      ], {
+        duration: 800 + Math.random() * 400,
+        easing: 'cubic-bezier(0.25, 0.46, 0.45, 0.94)',
+        fill: 'forwards'
+      }).onfinish = () => p.remove();
+    }
+  }
+}
+
+// ============================================================
+//  初始化
+// ============================================================
+const DEFAULT_TASKS = `大声唱一首歌|3
+模仿一种动物叫声|2
+说一个笑话|4
+夸对方一句|3
+原地转三圈|2
+做一个鬼脸|2
+学猫叫三声|1
+模仿班主任说话|4
+摆一个最酷的pose|2
+做十个俯卧撑|5
+用屁股写自己的名字|6
+学一段广告台词|6
+表演一个才艺|8
+做二十个深蹲|7
+学一首新歌副歌|5
+即兴rap一分钟|7
+模仿最讨厌的明星|5
+一口气喝完整杯水|8`;
+
+// ============================================================

@@ -1,0 +1,500 @@
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    line-height: 1;
+  }
+
+  .effect-toast {
+    position: fixed;
+    top: 80px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(0,0,0,0.85);
+    color: #fff;
+    padding: 10px 20px;
+    border-radius: 10px;
+    font-size: 14px;
+    z-index: 9999;
+    border: 2px solid var(--p1);
+    animation: toastIn 0.3s ease-out, toastOut 0.3s ease-in 1.7s forwards;
+    pointer-events: none;
+  }
+  @keyframes toastIn {
+    from { opacity: 0; transform: translateX(-50%) translateY(-20px); }
+    to   { opacity: 1; transform: translateX(-50%) translateY(0); }
+  }
+  @keyframes toastOut {
+    from { opacity: 1; }
+    to   { opacity: 0; transform: translateX(-50%) translateY(-10px); }
+  }
+
+  /* 脱装备弹窗中的装备按钮 */
+  .clothes-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 12px;
+    border-radius: 10px;
+    background: rgba(255,255,255,0.06);
+    border: 1px solid rgba(255,255,255,0.12);
+    cursor: pointer;
+    transition: all 0.2s ease;
+  }
+  .clothes-item:hover {
+    background: rgba(168, 85, 247, 0.2);
+    border-color: rgba(168, 85, 247, 0.6);
+    transform: translateY(-2px);
+  }
+  .clothes-item .ci-icon {
+    font-size: 20px;
+    flex-shrink: 0;
+  }
+  .clothes-item .ci-name {
+    font-size: 13px;
+    color: #e5e7eb;
+  }
+
+  /* 玩家头像 */
+  .avatar {
+    width: 48px;
+    height: 48px;
+    border-radius: 50%;
+    border: 2px solid;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 20px;
+    font-weight: bold;
+  }
+
+  .avatar-p1 {
+    border-color: var(--p1);
+    background: radial-gradient(circle at 30% 30%, hsla(210, 90%, 70%, 0.3), hsla(210, 90%, 30%, 0.5));
+    color: var(--p1);
+    box-shadow: 0 0 15px var(--p1-glow);
+  }
+
+  .avatar-p2 {
+    border-color: var(--p2);
+    background: radial-gradient(circle at 30% 30%, hsla(340, 90%, 75%, 0.3), hsla(340, 85%, 35%, 0.5));
+    color: var(--p2);
+    box-shadow: 0 0 15px var(--p2-glow);
+  }
+
+  /* 文本区 */
+  textarea, input {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    color: var(--text);
+    border-radius: 8px;
+    padding: 10px 12px;
+    font-family: inherit;
+    outline: none;
+    transition: border-color 0.2s;
+  }
+  textarea:focus, input:focus { border-color: var(--p1); }
+
+  /* 滚动条 */
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: var(--surface); }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+  ::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
+
+  /* 路径编号指示器 */
+  .cell-index {
+    position: absolute;
+    top: 2px;
+    left: 4px;
+    font-size: 8px;
+    opacity: 0.4;
+    font-family: 'Orbitron', monospace;
+  }
+
+  /* 传送光效 */
+  .teleport-effect {
+    animation: teleportPulse 1s ease-in-out;
+  }
+
+  @keyframes teleportPulse {
+    0%, 100% { box-shadow: 0 0 10px var(--teal); }
+    50% { box-shadow: 0 0 40px var(--teal), 0 0 60px var(--teal), inset 0 0 20px var(--teal); }
+  }
+
+  /* 积分弹出动画 */
+  .score-popup {
+    position: absolute;
+    font-family: 'Orbitron', sans-serif;
+    font-weight: 900;
+    font-size: 24px;
+    pointer-events: none;
+    animation: scoreFloat 1.2s ease-out forwards;
+    z-index: 200;
+  }
+
+  @keyframes scoreFloat {
+    0% { transform: translateY(0) scale(0.5); opacity: 0; }
+    30% { transform: translateY(-20px) scale(1.2); opacity: 1; }
+    100% { transform: translateY(-60px) scale(0.8); opacity: 0; }
+  }
+
+  /* 棋子到达终点 */
+  .piece-finished {
+    opacity: 0.5;
+    filter: saturate(0.5);
+  }
+
+  .piece-finished::after {
+    content: '✓';
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 14px;
+  }
+
+  /* 小屏适配 */
+  @media (max-width: 640px) {
+    .cell { font-size: 8px; border-radius: 6px; }
+    .dice-scene { width: 70px; height: 70px; }
+    .dice-face { width: 70px; height: 70px; padding: 10px; border-radius: 10px; }
+    .dice-final { padding: 10px; border-radius: 10px; }
+    .face-front  { transform: rotateY(  0deg) translateZ(35px); }
+    .face-back   { transform: rotateY(180deg) translateZ(35px); }
+    .face-right  { transform: rotateY( 90deg) translateZ(35px); }
+    .face-left   { transform: rotateY(-90deg) translateZ(35px); }
+    .face-top    { transform: rotateX( 90deg) translateZ(35px); }
+    .face-bottom { transform: rotateX(-90deg) translateZ(35px); }
+    .dice-face .dot { width: 10px; height: 10px; }
+    .avatar { width: 36px; height: 36px; font-size: 14px; }
+  }
+
+  /* 胜利画面 */
+  .victory-burst {
+    animation: burst 1s ease-out;
+  }
+
+  @keyframes burst {
+    0% { transform: scale(0); opacity: 0; }
+    50% { transform: scale(1.2); opacity: 1; }
+    100% { transform: scale(1); opacity: 1; }
+  }
+
+  /* 商店商品 */
+  .shop-item {
+    transition: all 0.2s;
+    cursor: pointer;
+  }
+  .shop-item:hover {
+    transform: translateY(-2px);
+    border-color: var(--gold);
+    box-shadow: 0 4px 20px hsla(45, 90%, 55%, 0.3);
+  }
+
+  .shop-item.affordable { border-color: hsl(45, 80%, 40%); }
+  .shop-item.unaffordable { opacity: 0.5; cursor: not-allowed; }
+
+  /* 配置页 */
+  .config-area {
+    min-height: 300px;
+    resize: vertical;
+  }
+
+  .hide-scrollbar::-webkit-scrollbar { display: none; }
+  .hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+</style>
+</head>
+<body>
+
+<!-- 粒子容器 -->
+<div id="particleContainer" class="particle-container"></div>
+
+<!-- 配置页面 -->
+<!-- 加入房间输入弹窗 -->
+<div id="joinModal" class="fixed inset-0 z-50 hidden items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
+  <div class="glass rounded-2xl p-6 md:p-8 max-w-sm w-full">
+    <h3 class="font-display text-xl font-bold mb-4 text-center">加入房间</h3>
+    <input id="joinRoomInput" type="text" maxlength="6" placeholder="输入6位房间号" class="config-area w-full text-center font-display text-2xl tracking-widest mb-4" style="letter-spacing: 0.5em;">
+    <div class="flex gap-2">
+      <button id="joinModalCancel" class="btn btn-ghost flex-1">取消</button>
+      <button id="joinModalConfirm" class="btn btn-primary flex-1">加入</button>
+    </div>
+  </div>
+</div>
+
+<!-- 首页：模式选择 -->
+<div id="homeView" class="relative z-10 min-h-screen flex items-center justify-center p-4">
+  <div class="glass rounded-2xl p-6 md:p-8 max-w-lg w-full modal-enter">
+    <div class="text-center mb-8">
+      <h1 class="font-display text-4xl md:text-5xl font-black bg-gradient-to-r from-blue-400 via-purple-400 to-pink-400 bg-clip-text text-transparent mb-2">星空飞行棋</h1>
+      <p class="text-sm text-gray-400">双人对战 · 任务冒险模式</p>
+    </div>
+
+    <div class="space-y-3">
+      <button id="modeLocal" class="btn btn-primary w-full text-lg py-4 font-display flex items-center justify-center gap-3">
+        <span class="text-2xl">🎮</span>
+        <span>本地双人</span>
+      </button>
+      <button id="modeCreate" class="btn btn-primary w-full text-lg py-4 font-display flex items-center justify-center gap-3" style="background: linear-gradient(135deg, hsl(270,80%,55%), hsl(210,90%,55%));">
+        <span class="text-2xl">🏠</span>
+        <span>创建房间</span>
+      </button>
+      <button id="modeJoin" class="btn btn-primary w-full text-lg py-4 font-display flex items-center justify-center gap-3" style="background: linear-gradient(135deg, hsl(340,85%,55%), hsl(270,80%,55%));">
+        <span class="text-2xl">🚪</span>
+        <span>加入房间</span>
+      </button>
+    </div>
+
+    <div class="mt-6 text-center text-xs text-gray-500">
+      联机模式通过 WebSocket 实时同步
+    </div>
+  </div>
+</div>
+
+<!-- 房间等待页 -->
+<div id="lobbyView" class="relative z-10 hidden min-h-screen flex items-center justify-center p-4">
+  <div class="glass rounded-2xl p-6 md:p-8 max-w-md w-full modal-enter text-center">
+    <div class="mb-6">
+      <h2 class="font-display text-2xl font-bold mb-2" id="lobbyTitle">等待对方加入</h2>
+      <p class="text-sm text-gray-400" id="lobbySubtitle">把房间号分享给朋友</p>
+    </div>
+
+    <div class="bg-surface-2 rounded-xl p-6 mb-6">
+      <div class="text-xs text-gray-400 mb-2">房间号</div>
+      <div class="font-display text-4xl font-black tracking-widest text-yellow-400" id="roomIdDisplay">------</div>
+      <button id="copyRoomId" class="btn btn-ghost text-sm mt-3 px-4 py-1">📋 复制房间号</button>
+    </div>
+
+    <div class="flex items-center justify-center gap-2 text-gray-400 mb-6">
+      <div class="w-2 h-2 rounded-full bg-green-400 animate-pulse"></div>
+      <span class="text-sm" id="lobbyStatus">等待连接中...</span>
+    </div>
+
+    <div class="flex gap-2 mb-4">
+      <div class="flex-1 glass rounded-lg p-3">
+        <div class="text-xs text-gray-400">玩家1（房主）</div>
+        <div class="text-sm font-bold" id="lobbyP1Name">等待中...</div>
+      </div>
+      <div class="flex-1 glass rounded-lg p-3">
+        <div class="text-xs text-gray-400">玩家2</div>
+        <div class="text-sm font-bold" id="lobbyP2Name">等待中...</div>
+      </div>
+    </div>
+
+    <button id="leaveRoomBtn" class="btn btn-ghost w-full text-sm">返回首页</button>
+  </div>
+</div>
+
+<!-- 断连提示 -->
+<div id="disconnectModal" class="fixed inset-0 z-50 hidden items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
+  <div class="glass rounded-2xl p-6 md:p-8 max-w-sm w-full text-center">
+    <div class="text-5xl mb-4">⚠️</div>
+    <h3 class="font-display text-xl font-bold mb-2">对方已断开连接</h3>
+    <p class="text-sm text-gray-400 mb-6">你的对手离开了游戏</p>
+    <button id="disconnectBackBtn" class="btn btn-primary w-full">返回首页</button>
+  </div>
+</div>
+
+<!-- 配置页（本地双人用） -->
+<div id="configView" class="relative z-10 hidden min-h-screen flex items-center justify-center p-4">
+  <div class="glass rounded-2xl p-6 md:p-8 max-w-2xl w-full modal-enter">
+    <div class="text-center mb-6">
+      <h1 class="font-display text-3xl md:text-4xl font-black bg-gradient-to-r from-blue-400 via-purple-400 to-pink-400 bg-clip-text text-transparent mb-2">星空飞行棋</h1>
+      <p class="text-sm text-gray-400">双人本地对战 · 任务冒险模式</p>
+    </div>
+
+    <div class="mb-4">
+      <label class="block text-sm text-gray-300 mb-2 font-medium">📋 任务库配置（每行格式：任务描述|积分奖励，积分1-8分。1-4分为低分区，5-8分为高分区）</label>
+      <textarea id="taskConfig" class="config-area w-full text-sm" style="font-family: 'Noto Sans SC', monospace;">大声唱一首歌|3
+做十个俯卧撑|5
+模仿一种动物叫声|2
+说一个笑话|4
+夸对方一句|3
+原地转三圈|2
+用屁股写自己的名字|6
+学一段广告台词|4
+表演一个才艺|8
+做一个鬼脸|2</textarea>
+    </div>
+
+    <div class="flex gap-3 mb-4">
+      <button id="addDefaultTasks" class="btn btn-ghost flex-1 text-sm">恢复默认任务</button>
+      <button id="clearTasks" class="btn btn-ghost flex-1 text-sm">清空列表</button>
+    </div>
+
+    <div class="glass rounded-xl p-4 mb-6">
+      <h3 class="font-display font-bold text-sm mb-2 text-yellow-400">🎲 游戏规则</h3>
+      <ul class="text-xs text-gray-400 space-y-1 list-disc list-inside">
+        <li>双人轮流掷骰子，选择棋子移动</li>
+        <li>每枚棋子到达终点即完成，先完成两枚者获胜</li>
+        <li>任务格2选1获得积分，事件格触发随机事件</li>
+        <li>传送格传送到上一层同列位置，商店格可用积分购物</li>
+        <li>碰撞对方棋子将其踢回下一层，碰撞己方棋子获得再投骰奖励</li>
+      </ul>
+    </div>
+
+    <button id="startGame" class="btn btn-primary w-full text-lg py-3 font-display">
+      🚀 开始游戏
+    </button>
+  </div>
+</div>
+
+<!-- 游戏主界面 -->
+<div id="gameView" class="relative z-10 hidden min-h-screen flex flex-col">
+  <!-- 顶部玩家信息栏 -->
+  <header class="p-3 md:p-4">
+    <div class="max-w-5xl mx-auto flex items-center gap-2 md:gap-4">
+      <!-- 玩家1 -->
+      <div id="p1Info" class="glass rounded-xl p-2 md:p-3 flex-1 flex items-center gap-2 md:gap-3 transition-all duration-300">
+        <div class="avatar avatar-p1 font-display shrink-0">P1</div>
+        <div class="min-w-0 flex-1">
+          <div class="font-display text-xs text-gray-400">玩家 1</div>
+          <div class="flex items-center gap-2">
+            <span class="text-lg md:text-xl font-bold text-blue-400 font-display" id="p1Score">10</span>
+            <span class="text-xs text-gray-500">积分</span>
+          </div>
+          <div class="flex gap-1 mt-1 items-center flex-wrap">
+            <span class="text-xs text-blue-300" id="p1Pieces">●● 未完成</span>
+          </div>
+          <div id="p1Equipment" class="flex gap-1 mt-1.5 flex-wrap">
+             <!-- 装备槽由 JS 生成 -->
+           </div>
+           <div id="p1Inventory" class="flex gap-1 mt-1 flex-wrap">
+             <!-- 背包道具由 JS 生成 -->
+           </div>
+        </div>
+      </div>
+
+
+
+      <!-- 玩家2 -->
+      <div id="p2Info" class="glass rounded-xl p-2 md:p-3 flex-1 flex items-center gap-2 md:gap-3 transition-all duration-300">
+        <div class="flex-1 text-right min-w-0">
+          <div class="font-display text-xs text-gray-400">玩家 2</div>
+          <div class="flex items-center justify-end gap-2">
+            <span class="text-xs text-gray-500">积分</span>
+            <span class="text-lg md:text-xl font-bold text-pink-400 font-display" id="p2Score">10</span>
+          </div>
+          <div class="flex gap-1 mt-1 justify-end">
+            <span class="text-xs text-pink-300" id="p2Pieces">●● 未完成</span>
+          </div>
+          <div id="p2Equipment" class="flex gap-1 mt-1.5 flex-wrap justify-end">
+             <!-- 装备槽由 JS 生成 -->
+           </div>
+           <div id="p2Inventory" class="flex gap-1 mt-1 flex-wrap justify-end">
+             <!-- 背包道具由 JS 生成 -->
+           </div>
+        </div>
+        <div class="avatar avatar-p2 font-display shrink-0">P2</div>
+      </div>
+    </div>
+  </header>
+
+  <!-- 棋盘区域 -->
+  <main class="flex-1 flex items-center justify-center px-2 md:px-4 pb-2">
+    <div class="w-full max-w-3xl flex flex-col">
+      <div class="relative">
+        <div id="board" class="grid grid-cols-8 gap-1.5 md:gap-2 relative">
+        <!-- 格子由 JS 生成 -->
+        </div>
+      </div>
+
+      <!-- 信息提示区 -->
+      <div id="infoPanel" class="glass rounded-xl p-3 mt-3 text-center min-h-[48px] flex items-center justify-center">
+        <p id="infoText" class="text-sm text-gray-300">游戏开始！玩家 1 掷骰子</p>
+      </div>
+
+      <!-- 骰子区域（提示文字下方） -->
+      <div class="text-center mt-3">
+        <div id="diceContainer" class="dice-scene cursor-pointer dice-ready show-final">
+          <div id="dice" class="dice">
+            <div class="dice-face face-1 face-front"><span class="dot"></span></div>
+            <div class="dice-face face-6 face-back"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="dot"></span></div>
+            <div class="dice-face face-2 face-right"><span class="dot"></span><span class="dot"></span></div>
+            <div class="dice-face face-5 face-left"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="dot"></span></div>
+            <div class="dice-face face-3 face-top"><span class="dot"></span><span class="dot"></span><span class="dot"></span></div>
+            <div class="dice-face face-4 face-bottom"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="dot"></span></div>
+          </div>
+          <div id="diceFinal" class="dice-final"></div>
+        </div>
+        <div id="diceHint" class="text-xs text-gray-400 mt-2 font-display">点击掷骰</div>
+        <div id="rerollBar" class="hidden flex gap-2 justify-center mt-3">
+          <button id="rerollDiceBtn" class="btn btn-gold text-sm px-4 py-2">🔄 重投 <span class="font-bold">(花费 2)</span></button>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <!-- 底部操作栏 -->
+  <footer class="p-3 md:p-4">
+    <div class="max-w-5xl mx-auto flex justify-center gap-2">
+      <button id="backToConfig" class="btn btn-ghost text-sm">⚙ 重新配置</button>
+      <button id="restartGame" class="btn btn-ghost text-sm">🔄 重新开始</button>
+    </div>
+  </footer>
+</div>
+
+<!-- 任务选择模态框 -->
+<div id="taskModal" class="fixed inset-0 z-50 hidden items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
+  <div class="glass rounded-2xl p-6 max-w-lg w-full modal-enter relative overflow-hidden">
+    <div class="card-shine" style="animation-duration: 3s;"></div>
+    <h2 class="font-display text-xl font-bold text-center mb-1 text-purple-300">✨ 任务抽取 ✨</h2>
+    <p class="text-xs text-center text-gray-400 mb-5">选择一个任务完成以获得积分</p>
+    <div class="grid grid-cols-2 gap-3 mb-4">
+       <div id="taskCard1" class="glass rounded-xl p-4 cursor-pointer hover:scale-105 transition-transform border border-sky-400/60 relative overflow-hidden card-reveal" style="box-shadow: 0 0 24px rgba(56,189,248,0.15) inset;">
+         <div class="card-shine"></div>
+         <div class="flex items-center justify-between mb-2">
+           <div class="text-2xl">🎯</div>
+           <span class="text-[10px] px-2 py-0.5 rounded-full bg-sky-500/20 text-sky-300 border border-sky-400/40 font-medium">低难度</span>
+         </div>
+         <p class="text-sm font-medium mb-2" id="taskText1"></p>
+         <div class="flex items-center justify-between">
+           <span class="text-xs text-gray-400">奖励积分</span>
+           <span class="font-display font-bold text-sky-300" id="taskReward1"></span>
+         </div>
+       </div>
+       <div id="taskCard2" class="glass rounded-xl p-4 cursor-pointer hover:scale-105 transition-transform border border-amber-400/60 relative overflow-hidden card-reveal" style="box-shadow: 0 0 24px rgba(251,191,36,0.18) inset;">
+         <div class="card-shine" style="animation-delay: 0.5s;"></div>
+         <div class="flex items-center justify-between mb-2">
+           <div class="text-2xl">🔥</div>
+           <span class="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-400/40 font-medium">高难度</span>
+         </div>
+         <p class="text-sm font-medium mb-2" id="taskText2"></p>
+         <div class="flex items-center justify-between">
+           <span class="text-xs text-gray-400">奖励积分</span>
+           <span class="font-display font-bold text-yellow-400" id="taskReward2"></span>
+         </div>
+       </div>
+    </div>
+    <p class="text-xs text-center text-gray-500">点击卡片完成任务并领取奖励</p>
+  </div>
+</div>
+
+<!-- 事件模态框 -->
+<div id="eventModal" class="fixed inset-0 z-50 hidden items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
+  <div class="glass rounded-2xl p-6 max-w-md w-full modal-enter relative overflow-hidden">
+    <div class="card-shine" style="animation-duration: 2.5s;"></div>
+    <h2 class="font-display text-xl font-bold text-center mb-1 text-purple-400">⚡ 随机事件 ⚡</h2>
+    <p class="text-xs text-center text-gray-400 mb-5" id="eventName">神秘事件</p>
+    <div class="glass rounded-xl p-5 mb-4 border border-purple-500/40 card-reveal">
+      <div class="text-lg font-display font-bold text-center mb-2 text-purple-300" id="eventNameDisplay">神秘事件</div>
+      <p class="text-center text-sm text-gray-300" id="eventDesc"></p>
+    </div>
+    <button id="eventClose" class="btn btn-primary w-full">确认</button>
+  </div>
+</div>
+
+<!-- 商店模态框 -->
+<div id="shopModal" class="fixed inset-0 z-50 hidden items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
+  <div class="glass rounded-2xl p-6 max-w-lg w-full modal-enter relative overflow-hidden">
+    <div class="card-shine" style="animation-duration: 4s;"></div>
+    <h2 class="font-display text-xl font-bold text-center mb-1 text-yellow-400">🏪 星空商店 🏪</h2>
+    <p class="text-xs text-center text-gray-400 mb-4">当前积分: <span id="shopScore" class="font-display font-bold text-yellow-400">0</span></p>
+    <div id="shopItems" class="space-y-2 mb-4 max-h-64 overflow-y-auto">
+      <!-- 商品由 JS 生成 -->
+    </div>
+    <button id="shopClose" class="btn btn-gold w-full">离开商店</button>
+  </div>
