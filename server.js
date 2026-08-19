@@ -142,6 +142,21 @@ const DEFAULT_TASKS = [
   { desc: '一口气喝完整杯水', reward: 8 }
 ];
 
+function parseTasks(raw) {
+  if (!raw || typeof raw !== "string") return null;
+  const tasks = raw.trim().split("\n").map((line, i) => {
+    const [desc, r] = line.split("|");
+    const reward = parseInt(r, 10);
+    if (!desc || !desc.trim() || isNaN(reward)) return null;
+    return { desc: desc.trim(), reward: reward };
+  }).filter(Boolean);
+  if (tasks.length < 4) return null;
+  const low = tasks.filter(t => t.reward <= 4);
+  const high = tasks.filter(t => t.reward >= 5);
+  if (low.length < 2 || high.length < 2) return null;
+  return tasks;
+}
+
 // ============================================================
 //  游戏引擎
 // ============================================================
@@ -660,8 +675,11 @@ class GameEngine {
     this.state.players[rewardPlayer].score += totalReward;
     this.emit('scoreChange', { player: rewardPlayer, delta: totalReward, score: this.state.players[rewardPlayer].score });
     this.emit('stateChange', this.state);
-    this.emit('hideTask');
-    this.finishCellResolve();
+    this.emit('taskSelected', { taskIndex, desc: task.desc, reward: totalReward });
+    setTimeout(() => {
+      this.emit('hideTask');
+      this.finishCellResolve();
+    }, 1200);
   }
 
   closeEvent() {
@@ -1726,31 +1744,40 @@ class Room {
     this.sendToAll('gameEvent', { event, data });
   }
 
-  startGame() {
+  startGame(taskList) {
     if (this.started) return;
     this.started = true;
-    this.engine = new GameEngine();
+    const tasks = parseTasks(taskList);
+    this.engine = new GameEngine(tasks);
 
-    const eventsToForward = [
+    // 公开事件：双方都能看到
+    const publicEvents = [
       'stateChange', 'diceRoll', 'selectPiece', 'autoSelectPiece', 'pieceMove',
-      'pieceFinished', 'showTask', 'hideTask', 'showEvent', 'hideEvent',
-      'showShop', 'hideShop', 'scoreChange', 'itemPurchased',
-      'teleport', 'kicked', 'stackBonus', 'showClothesChoice',
-      'hideClothesChoice', 'equipmentChange', 'inventoryChange',
-      'itemEffect', 'eventEffect', 'extraTurn', 'showRerollChoice',
-      'endgamePenalty', 'turnChange', 'victory', 'piecesRaised',
-      'piecesRetreated', 'pieceMoved'
+      'pieceFinished', 'showTask', 'taskSelected', 'hideTask', 'showEvent', 'hideEvent',
+      'scoreChange', 'teleport', 'kicked', 'stackBonus',
+      'equipmentChange', 'inventoryChange', 'itemEffect', 'eventEffect',
+      'extraTurn', 'showRerollChoice', 'endgamePenalty', 'turnChange',
+      'victory', 'piecesRaised', 'piecesRetreated', 'pieceMoved'
     ];
+    // 私密事件：仅操作玩家可见
+    const privateEvents = ['showShop', 'hideShop', 'itemPurchased', 'showClothesChoice', 'hideClothesChoice'];
 
-    eventsToForward.forEach(evt => {
+    publicEvents.forEach(evt => {
+      this.engine.on(evt, (data) => this.broadcastGameEvent(evt, data));
+    });
+    privateEvents.forEach(evt => {
       this.engine.on(evt, (data) => {
-        this.broadcastGameEvent(evt, data);
+        this.sendGameEventTo(this.engine.state.currentPlayer, evt, data);
       });
     });
 
     this.sendToAll('gameStart', {});
     this.broadcastGameEvent('stateChange', this.engine.state);
     this.broadcastGameEvent('turnChange', this.engine.state.currentPlayer);
+  }
+
+  sendGameEventTo(playerIndex, event, data) {
+    this.sendToPlayer(playerIndex, 'gameEvent', { event, data });
   }
 }
 
@@ -1817,7 +1844,7 @@ function setupWebSocket(server) {
         handleLeaveRoom(ws);
         break;
       case 'startGame':
-        handleStartGame(ws);
+        handleStartGame(ws, data);
         break;
       case 'gameAction':
         handleGameAction(ws, data);
@@ -1870,12 +1897,12 @@ function setupWebSocket(server) {
     }
   }
 
-  function handleStartGame(ws) {
+  function handleStartGame(ws, data) {
     if (!ws.roomId || !rooms.has(ws.roomId)) return;
     const room = rooms.get(ws.roomId);
     if (ws.playerIndex !== 0) return;
     if (!room.isFull()) return;
-    room.startGame();
+    room.startGame(data?.tasks);
   }
 
   function handleGameAction(ws, data) {
@@ -1890,7 +1917,7 @@ function setupWebSocket(server) {
     const selfActions = [
       'rollDice', 'rerollDice', 'movePiece', 'selectTask',
       'closeEvent', 'takeOffEquipment', 'buySkipClothes',
-      'buyItem', 'closeShop'
+      'buyItem', 'closeShop', 'diceAnimEnd', 'moveAnimEnd'
     ];
 
     if (selfActions.includes(action) && state.currentPlayer !== ws.playerIndex) {
@@ -1901,22 +1928,19 @@ function setupWebSocket(server) {
     switch (action) {
       case 'rollDice':
         engine.rollDice();
-        setTimeout(() => engine.onDiceAnimEnd(), 1350);
         break;
       case 'rerollDice':
         engine.rerollDice();
-        setTimeout(() => engine.onDiceAnimEnd(), 1350);
         break;
-      case 'movePiece': {
-        const mp = engine.state.currentPlayer;
-        const mi = payload?.pieceIndex;
-        const mFrom = engine.state.players[mp].pieces[mi];
-        engine.movePiece(mi);
-        const mTo = Math.min(39, mFrom + Math.max(1, engine.state.diceValue + (engine.state.diceBonus || 0)));
-        const animMs = (mTo - mFrom) * 180 + 200;
-        setTimeout(() => engine.onMoveComplete(mp, mi, mFrom, mTo), animMs);
+      case 'diceAnimEnd':
+        engine.onDiceAnimEnd();
         break;
-      }
+      case 'movePiece':
+        engine.movePiece(payload?.pieceIndex);
+        break;
+      case 'moveAnimEnd':
+        engine.onMoveComplete(ws.playerIndex, payload?.pieceIndex, payload?.fromPos, payload?.toPos);
+        break;
       case 'selectTask':
         engine.selectTask(payload?.taskIndex);
         break;

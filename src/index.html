@@ -335,10 +335,24 @@
 
   /* 任务卡片抽卡动效 */
   @keyframes cardReveal {
-    0% { opacity: 0; transform: rotateY(90deg) scale(0.8); }
-    100% { opacity: 1; transform: rotateY(0) scale(1); }
+    0% { opacity: 0; transform: translateX(-60px) rotateY(90deg) scale(0.7); }
+    60% { opacity: 1; transform: translateX(5px) rotateY(-5deg) scale(1.05); }
+    100% { opacity: 1; transform: translateX(0) rotateY(0) scale(1); }
   }
-  .card-reveal { animation: cardReveal 0.4s cubic-bezier(0.2, 1.4, 0.4, 1) both; }
+  .card-reveal { animation: cardReveal 0.5s cubic-bezier(0.2, 1.4, 0.4, 1) both; }
+  #taskCard1, #taskCard2 {
+    transition: all 0.2s;
+    cursor: pointer;
+    background: linear-gradient(135deg, rgba(59,130,246,0.1), rgba(30,30,50,0.8));
+  }
+  #taskCard1:hover, #taskCard2:hover {
+    border-color: #fbbf24 !important;
+    transform: translateY(-3px) scale(1.02);
+    box-shadow: 0 8px 25px rgba(251,191,36,0.3);
+  }
+  #taskCard2 {
+    background: linear-gradient(135deg, rgba(236,72,153,0.1), rgba(30,30,50,0.8));
+  }
 
   /* 粒子 */
   .particle {
@@ -487,11 +501,10 @@
   </div>
 
   <!-- 联机大厅 -->
-  <div id="lobbyView" class="hidden flex-1 flex items-center justify-center px-4 py-6">
-    <div class="glass rounded-2xl p-6 w-full max-w-md text-center">
-      <h2 id="lobbyTitle" class="font-display text-xl font-bold mb-2">房间</h2>
-      <p id="lobbySubtitle" class="text-sm text-gray-400 mb-4"></p>
-      <div class="bg-gray-900/50 rounded-xl p-4 mb-4">
+  <div id="lobbyView" class="hidden flex-1 flex items-center justify-center px-4 py-6 overflow-y-auto">
+    <div class="glass rounded-2xl p-6 w-full max-w-md">
+      <h2 id="lobbyTitle" class="font-display text-xl font-bold mb-2 text-center">房间</h2>
+      <div class="bg-gray-900/50 rounded-xl p-4 mb-4 text-center">
         <p class="text-xs text-gray-500 mb-1">房间号</p>
         <p id="roomIdDisplay" class="font-display text-4xl font-black text-yellow-400 tracking-widest"></p>
       </div>
@@ -499,7 +512,18 @@
         <span id="lobbyP1Name" class="text-blue-400">玩家1</span>
         <span id="lobbyP2Name" class="text-pink-400">等待中...</span>
       </div>
-      <p id="lobbyStatus" class="text-xs text-gray-500 mb-4"></p>
+      <div id="hostConfig" class="mb-4">
+        <p class="text-sm text-gray-400 mb-2">任务列表（每行：描述|积分）</p>
+        <textarea id="lobbyTaskConfig" class="input font-mono text-xs" rows="6" placeholder="任务描述|奖励积分"></textarea>
+        <div class="flex gap-2 mt-2">
+          <button id="lobbyAddDefault" class="btn btn-secondary flex-1 text-xs">填充默认</button>
+          <button id="lobbyClearTasks" class="btn btn-secondary flex-1 text-xs">清空</button>
+        </div>
+        <button id="hostStartBtn" class="btn btn-primary w-full py-3 mt-3" disabled>等待玩家2加入...</button>
+      </div>
+      <div id="guestWaiting" class="hidden text-center mb-4">
+        <p class="text-sm text-gray-400">等待房主开始游戏...</p>
+      </div>
       <div class="flex gap-2">
         <button id="copyRoomId" class="btn btn-secondary flex-1">复制房间号</button>
         <button id="leaveRoomBtn" class="btn btn-danger">离开</button>
@@ -1383,9 +1407,18 @@ class UIController {
 
   _bindEvents(){
     this.$('diceContainer').addEventListener('click',()=>this._onDiceClick());
-    this.$('taskCard1').addEventListener('click',()=>{this.game.selectTask(0);});
-    this.$('taskCard2').addEventListener('click',()=>{this.game.selectTask(1);});
-    this.$('eventClose').addEventListener('click',()=>this.game.closeEvent());
+    this.$('taskCard1').addEventListener('click',()=>{
+      if(this.mode==='online'&&this.game.state?.currentPlayer!==this.myIdx)return;
+      this.game.selectTask(0);
+    });
+    this.$('taskCard2').addEventListener('click',()=>{
+      if(this.mode==='online'&&this.game.state?.currentPlayer!==this.myIdx)return;
+      this.game.selectTask(1);
+    });
+    this.$('eventClose').addEventListener('click',()=>{
+      if(this.mode==='online'&&this.game.state?.currentPlayer!==this.myIdx)return;
+      this.game.closeEvent();
+    });
     this.$('shopClose').addEventListener('click',()=>this.game.closeShop());
     this.$('rerollDiceBtn').addEventListener('click',()=>this.game.rerollDice());
     this.$('clothesSkipBtn').addEventListener('click',()=>{
@@ -1396,10 +1429,25 @@ class UIController {
   _bindGame(){
     const g=this.game;
     g.on('stateChange',s=>this.updateUI(s));
-    g.on('diceRoll',({value})=>this._animateDice(value));
+    g.on('diceRoll',({value})=>{
+      if(this.mode==='online'){
+        if(this._onlineDiceValue===null||this._onlineDiceValue===undefined){
+          this._onlineDiceValue=value;
+        }
+      }else{
+        this._animateDice(value);
+      }
+    });
     g.on('selectPiece',v=>this._enableSelect(v));
     g.on('autoSelectPiece',({pieceIndex})=>{this._info('自动骰子！自动选择棋子');this._autoPiece=pieceIndex;});
-    g.on('pieceMove',d=>this._animateMove(d.player,d.pieceIndex,d.fromPos,d.toPos));
+    g.on('pieceMove',d=>{
+      // 联机模式下本地玩家的移动已经即时执行，跳过重复动画
+      if(this.mode==='online'&&d.player===this.myIdx&&this._animatingOnline){
+        this._animatingOnline=null;
+        return;
+      }
+      this._animateMove(d.player,d.pieceIndex,d.fromPos,d.toPos);
+    });
     g.on('pieceFinished',({player,pieceIndex})=>{
       this.pieceEls[player][pieceIndex].classList.add('piece-finished');
       this._info(`玩家${player+1}的棋子到达终点！`);
@@ -1409,7 +1457,17 @@ class UIController {
       if(this.mode==='online'&&player!==this.myIdx){this._info('对方选择任务中...');return;}
       this._showTask(player,tasks,label);
     });
-    g.on('hideTask',()=>this._hideModal('taskModal'));
+    g.on('taskSelected',({taskIndex,desc,reward})=>{
+      const card=taskIndex===0?this.$('taskCard1'):this.$('taskCard2');
+      card.style.borderColor='#fbbf24';
+      card.style.boxShadow='0 0 20px rgba(251,191,36,0.5)';
+      this._info(`选择了：${desc}（+${reward}分）`);
+    });
+    g.on('hideTask',()=>{
+      this.$('taskCard1').style.borderColor='';this.$('taskCard1').style.boxShadow='';
+      this.$('taskCard2').style.borderColor='';this.$('taskCard2').style.boxShadow='';
+      this._hideModal('taskModal');
+    });
     g.on('showEvent',({player,event})=>{
       if(this.mode==='online'&&player!==this.myIdx){this._info('对方触发事件...');return;}
       this._showEvent(event);
@@ -1536,7 +1594,14 @@ class UIController {
   _onDiceClick(){
     const s=this.game.state;if(!s||s.phase!=='idle')return;
     if(this.mode==='online'&&s.currentPlayer!==this.myIdx)return;
-    this.game.rollDice();
+    if(this.mode==='online'){
+      // 即时响应：立刻开始滚动动画，同时发送请求
+      this._onlineDiceValue=null;
+      this._animateDice(null);
+      this.game.rollDice();
+    }else{
+      this.game.rollDice();
+    }
   }
 
   _animateDice(value){
@@ -1558,15 +1623,35 @@ class UIController {
     });
     const dr=dc.getBoundingClientRect();
     this._particles(dr.left+dr.width/2,dr.top+dr.height/2,'#60a5fa',10);
-    setTimeout(()=>{
-      this._renderDiceFace(value);
+
+    const showFace=(v)=>{
+      this._renderDiceFace(v);
       dc.classList.add('show-final');
-    },1050);
-    setTimeout(()=>{
-      this.$('diceHint').textContent=`点数 ${value}`;
+      this.$('diceHint').textContent=`点数 ${v}`;
       dc.classList.remove('rolling');
-      this.game.onDiceAnimEnd();
-    },1300);
+      if(this.mode==='online'){
+        this.game.send('gameAction',{action:'diceAnimEnd'});
+      }else{
+        this.game.onDiceAnimEnd();
+      }
+    };
+
+    if(this.mode==='online'&&value===null){
+      // 联机模式：等待服务端返回点数
+      const startTime=Date.now();
+      const tryShow=()=>{
+        if(this._onlineDiceValue!==null&&this._onlineDiceValue!==undefined){
+          showFace(this._onlineDiceValue);
+        }else if(Date.now()-startTime<3000){
+          setTimeout(tryShow,50);
+        }else{
+          showFace(1);
+        }
+      };
+      setTimeout(tryShow,1050);
+    }else{
+      setTimeout(()=>showFace(value),1050);
+    }
   }
 
   _renderDiceFace(v){
@@ -1610,7 +1695,18 @@ class UIController {
   _selectPiece(idx){
     const cur=this.game.state.currentPlayer;
     for(let i=0;i<2;i++){this.pieceEls[cur][i].classList.remove('selectable');this.pieceEls[cur][i].onclick=null;}
-    this.game.movePiece(idx);
+    if(this.mode==='online'){
+      // 即时响应：本地立刻开始动画，同时发送移动指令
+      const s=this.game.state;
+      const from=s.players[cur].pieces[idx];
+      const steps=Math.max(1,s.diceValue+(s.diceBonus||0));
+      const to=Math.min(39,from+steps);
+      this._animatingOnline={player:cur,pieceIndex:idx,fromPos:from,toPos:to};
+      this.game.movePiece(idx);
+      this._animateMove(cur,idx,from,to);
+    }else{
+      this.game.movePiece(idx);
+    }
   }
 
   async _animateMove(player,idx,from,to){
@@ -1627,7 +1723,11 @@ class UIController {
       el.style.transform='translate(-50%,-50%) scale(1)';
       await new Promise(r=>setTimeout(r,70));
     }
-    this.game.onMoveComplete(player,idx,from,to);
+    if(this.mode==='online'){
+      this.game.send('gameAction',{action:'moveAnimEnd',payload:{pieceIndex:idx,fromPos:from,toPos:to}});
+    }else{
+      this.game.onMoveComplete(player,idx,from,to);
+    }
     requestAnimationFrame(()=>requestAnimationFrame(()=>this._positionPieces()));
   }
 
@@ -1652,21 +1752,25 @@ class UIController {
     const p=this.game.state.players[player];
     const bonus=p.equipment.filter(e=>!e.on).length*2;
     const fmt=r=>bonus>0?`<span class="text-gray-400">${r}</span> <span class="text-purple-300">(+${bonus})</span> = <span class="text-yellow-400">${r+bonus}</span>`:`+${r}分`;
-    this.$('taskCard1').querySelector('h3')?.remove();
-    const title=document.createElement('h3');
-    title.className='font-display text-lg font-bold text-center mb-3 col-span-2';
-    title.textContent=label?`🎯 ${label}`:'🎯 任务挑战';
     this.$('taskText1').textContent=tasks[0]?.desc||'';
     this.$('taskReward1').innerHTML=fmt(tasks[0]?.reward||0);
     this.$('taskText2').textContent=tasks[1]?.desc||'';
     this.$('taskReward2').innerHTML=fmt(tasks[1]?.reward||0);
+    // 标题（复用HTML中已有的h3）
+    const titleEl=this.$('taskModal').querySelector('h3');
+    if(titleEl) titleEl.textContent=label?`🎯 ${label}`:'🎯 任务挑战';
     const modal=this.$('taskModal');
     modal.classList.remove('hidden');modal.classList.add('flex');
     const c1=this.$('taskCard1'),c2=this.$('taskCard2');
     c1.classList.remove('card-reveal');c2.classList.remove('card-reveal');
+    c1.style.borderColor='';c1.style.boxShadow='';
+    c2.style.borderColor='';c2.style.boxShadow='';
     void c1.offsetWidth;
     c1.classList.add('card-reveal');
-    setTimeout(()=>c2.classList.add('card-reveal'),150);
+    setTimeout(()=>c2.classList.add('card-reveal'),200);
+    // 粒子效果
+    const mr=modal.getBoundingClientRect();
+    this._particles(mr.left+mr.width/2,mr.top+mr.height/2,'#a78bfa',15);
   }
 
   _showEvent(ev){
@@ -1771,6 +1875,18 @@ const App={
     this.$('joinRoomInput').onkeydown=e=>{if(e.key==='Enter')this._joinRoom();};
     this.$('copyRoomId').onclick=()=>this._copyRoom();
     this.$('leaveRoomBtn').onclick=()=>this._leave();
+    this.$('lobbyAddDefault').onclick=()=>{this.$('lobbyTaskConfig').value=DEFAULT_TASKS_RAW;};
+    this.$('lobbyClearTasks').onclick=()=>{this.$('lobbyTaskConfig').value='';};
+    this.$('hostStartBtn').onclick=()=>{
+      const raw=this.$('lobbyTaskConfig').value.trim();
+      const tasks=parseTasks(raw||DEFAULT_TASKS_RAW);
+      if(!tasks||tasks.filter(t=>t.reward<=4).length<2||tasks.filter(t=>t.reward>=5).length<2){
+        this._toast('至少需要2个1-4分和2个5-8分任务','error');return;
+      }
+      this.network.send('startGame',{tasks:raw});
+      this.$('hostStartBtn').disabled=true;
+      this.$('hostStartBtn').textContent='游戏开始中...';
+    };
     this.$('disconnectBackBtn').onclick=()=>this._home();
     this.$('addDefaultTasks').onclick=()=>{this.$('taskConfig').value=DEFAULT_TASKS_RAW;};
     this.$('startGame').onclick=()=>this._startLocal();
@@ -1829,10 +1945,41 @@ const App={
   },
   _bindNet(){
     const n=this.network;
-    n.on('roomCreated',d=>{this.$('roomIdDisplay').textContent=d.roomId;this.$('lobbyTitle').textContent='等待加入';this.$('lobbyP1Name').textContent='你（房主）';this.$('lobbyP2Name').textContent='等待中...';this._show('lobby');});
-    n.on('roomJoined',d=>{this.$('roomIdDisplay').textContent=d.roomId;this.$('lobbyTitle').textContent='已加入';this.$('lobbyP1Name').textContent='房主';this.$('lobbyP2Name').textContent='你';this._show('lobby');});
-    n.on('playerJoined',()=>{this.$('lobbyP2Name').textContent='玩家2 已加入';if(n.isHost)setTimeout(()=>n.send('startGame'),800);});
-    n.on('gameStart',()=>{this.mode='online';this.game=this.network;this.ui=new UIController(this.game,{mode:'online',myPlayerIndex:this.network.playerIndex});this._show('game');requestAnimationFrame(()=>this.ui._positionPieces());});
+    n.on('roomCreated',d=>{
+      this.$('roomIdDisplay').textContent=d.roomId;
+      this.$('lobbyTitle').textContent='等待加入';
+      this.$('lobbyP1Name').textContent='你（房主）';
+      this.$('lobbyP2Name').textContent='等待中...';
+      this.$('hostConfig').classList.remove('hidden');
+      this.$('guestWaiting').classList.add('hidden');
+      this.$('lobbyTaskConfig').value=DEFAULT_TASKS_RAW;
+      this.$('hostStartBtn').disabled=true;
+      this.$('hostStartBtn').textContent='等待玩家2加入...';
+      this._show('lobby');
+    });
+    n.on('roomJoined',d=>{
+      this.$('roomIdDisplay').textContent=d.roomId;
+      this.$('lobbyTitle').textContent='已加入';
+      this.$('lobbyP1Name').textContent='房主';
+      this.$('lobbyP2Name').textContent='你';
+      this.$('hostConfig').classList.add('hidden');
+      this.$('guestWaiting').classList.remove('hidden');
+      this._show('lobby');
+    });
+    n.on('playerJoined',()=>{
+      this.$('lobbyP2Name').textContent='玩家2 已加入';
+      if(n.isHost){
+        this.$('hostStartBtn').disabled=false;
+        this.$('hostStartBtn').textContent='开始游戏';
+      }
+    });
+    n.on('gameStart',()=>{
+      this.mode='online';
+      this.game=this.network;
+      this.ui=new UIController(this.game,{mode:'online',myPlayerIndex:this.network.playerIndex});
+      this._show('game');
+      requestAnimationFrame(()=>this.ui._positionPieces());
+    });
     n.on('opponentDisconnected',()=>{this.$('disconnectModal').classList.remove('hidden');this.$('disconnectModal').classList.add('flex');});
     n.on('error',msg=>this._toast(msg||'错误','error'));
   },
